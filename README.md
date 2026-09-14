@@ -41,6 +41,33 @@ grid still knows which segment is which, because the anchors moved with the
 text. What you are looking at while you translate is the deliverable, in its
 final format, at every moment.
 
+## Why tags mostly disappear
+
+In Trados or memoQ, tags exist because the editor is not the document.
+Formatting has to be smuggled through the grid as placeholders and put back on
+export. Here the document is right there, live, and the target text lives
+inside it. So the rule can be: the pane handles the text, and Word handles the
+formatting. If a sentence needs a word in italics, you click into it in Word
+and press Ctrl+I, and nothing in the pane or the record needs to know. The
+record stores the plain target, the TM gets a plain sentence, and the
+formatting lives where it belongs, in the file.
+
+Most inline formatting a translator ever touches is bold, italics, underline,
+super and subscript, and hyperlinks. None of that needs a tag.
+
+What is left is a short list of things that are not text: footnote
+references, cross-reference fields, index entries, inline images, bookmarks.
+Those will appear in the pane as small opaque chips you can move but not edit,
+and the pane will refuse to confirm a segment if one is missing. On most
+documents that list is empty.
+
+## Terminology in the source, not beside it
+
+The source box in the pane is a TermLens: termbase targets sit under the words
+they belong to, numbered, and Alt+1 to Alt+9 insert them at the caret in the
+target box. A term with several candidates unfolds into a small picker on
+click. No separate terminology window, no chips to scan.
+
 One file, three consumers: Otto can emit it, the pane edits it in place, and
 Supervertaler Workbench can open it as a project.
 
