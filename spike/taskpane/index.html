@@ -355,7 +355,7 @@ function renderGrid() {
     tb.appendChild(tr);
   });
   const cur = tb.querySelector("tr.current");
-  if (cur) cur.scrollIntoView({block: "nearest"});
+  if (cur) cur.scrollIntoView({block: "center"});     // keep the current row mid-grid
 }
 
 let lensHits = [];
