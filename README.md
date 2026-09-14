@@ -2,7 +2,8 @@
 
 **A CAT tool that lives inside Microsoft Word. The document is the project.**
 
-![Supervertaler for Word task pane beside a document in Word](docs/screenshots/taskpane.png)
+<!-- screenshot: paste the task pane screenshot here -->
+*Screenshot coming.*
 
 *Word shows the clean target text. The pane shows the sentence under the cursor
 with its source, TM matches with differences marked, termbase hits, and a grid
