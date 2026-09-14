@@ -101,7 +101,7 @@
   </section>
   <section id="grid">
     <table>
-      <thead><tr><th>#</th><th></th><th>Source</th><th>Target</th></tr></thead>
+      <thead><tr><th>#</th><th></th><th id="th-src">Source</th><th id="th-tgt">Target</th></tr></thead>
       <tbody id="rows"></tbody>
     </table>
   </section>
@@ -450,13 +450,20 @@ async function draftAll() {
 Office.onReady(async info => {
   if (info.host !== Office.HostType.Word) { $("foot").textContent = "Open this pane in Word."; return; }
   await loadRecord();
-  if (record) { $("tgt").lang = record.targetLang; $("src").lang = record.sourceLang; }
+  if (record) {
+    $("tgt").lang = record.targetLang; $("src").lang = record.sourceLang;
+    const names = new Intl.DisplayNames(["en-GB"], {type: "language"});
+    const name = code => { try { return names.of(code); } catch (e) { return code; } };
+    $("th-src").textContent = name(record.sourceLang);
+    $("th-tgt").textContent = name(record.targetLang);
+    $("tgt").placeholder = name(record.targetLang);
+  }
   renderCounts(); renderGrid();
   Office.context.document.addHandlerAsync(Office.EventType.DocumentSelectionChanged, onSelectionChanged);
   $("confirm").onclick = confirmAndNext;
   $("draftall").onclick = draftAll;
   $("tgt").addEventListener("keydown", e => { if (e.ctrlKey && e.key === "Enter") { e.preventDefault(); confirmAndNext(); } });
-  $("foot").textContent = record ? `Record loaded: ${record.sourceLang} → ${record.targetLang}. Matches are a mock; the real pane asks the local engine.`
+  $("foot").textContent = record ? `${record.sourceLang} → ${record.targetLang} · matches are a mock; the real pane asks the local engine.`
                                  : "This document has no Supervertaler record yet.";
   onSelectionChanged();
 });
