@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<title>Supervertaler for Word</title>
+<script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
+<style>
+  :root {
+    --blue: #1f5fbf; --blue-soft: #e8f0fb; --ink: #1c1c1c; --muted: #6b6b6b;
+    --line: #e1e1e1; --bg: #fafafa; --ok: #2e7d32; --warn: #b26a00; --hit: #fff3b0;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; font: 13px "Segoe UI", system-ui, sans-serif; color: var(--ink); background: var(--bg); }
+  body { display: flex; flex-direction: column; }
+  header { display: flex; align-items: center; gap: 8px; padding: 8px 10px; background: #fff; border-bottom: 1px solid var(--line); }
+  header .brand { font-weight: 600; color: var(--blue); }
+  header .counts { margin-left: auto; color: var(--muted); font-size: 12px; }
+  main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+  section { border-bottom: 1px solid var(--line); background: #fff; }
+  section h2 { margin: 0; padding: 6px 10px; font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); display: flex; align-items: center; }
+  section h2 .pill { margin-left: auto; font-weight: 400; text-transform: none; letter-spacing: 0; }
+  #segment { padding: 0 10px 10px; }
+  #src { padding: 8px; background: var(--blue-soft); border-radius: 4px; min-height: 42px; line-height: 1.45; }
+  #src mark { background: var(--hit); padding: 0 1px; border-radius: 2px; }
+  #tgt { width: 100%; margin-top: 8px; min-height: 64px; padding: 8px; border: 1px solid var(--line); border-radius: 4px; font: inherit; line-height: 1.45; resize: vertical; }
+  #tgt:focus { outline: 2px solid var(--blue); border-color: transparent; }
+  .row { display: flex; gap: 8px; align-items: center; margin-top: 8px; }
+  .status { font-size: 12px; color: var(--muted); }
+  .status.confirmed { color: var(--ok); }
+  button { font: inherit; padding: 6px 12px; border-radius: 4px; border: 1px solid var(--blue); background: var(--blue); color: #fff; cursor: pointer; }
+  button.ghost { background: #fff; color: var(--blue); }
+  button:disabled { opacity: .5; cursor: default; }
+  .hint { color: var(--muted); font-size: 11px; margin-left: auto; }
+  #matches { flex: 0 0 auto; max-height: 40%; overflow: auto; }
+  .tm { padding: 6px 10px; border-top: 1px solid var(--line); cursor: pointer; }
+  .tm:hover { background: var(--blue-soft); }
+  .tm .pct { display: inline-block; min-width: 38px; font-weight: 600; color: var(--blue); }
+  .tm .pct.exact { color: var(--ok); }
+  .tm .s { color: var(--muted); }
+  .tm .s del { background: #fde2e2; text-decoration: line-through; color: #a33; }
+  .tm .s ins { background: #dff5df; text-decoration: none; color: #1b5e20; }
+  .tm .t { margin-top: 2px; }
+  .tm .meta { font-size: 11px; color: var(--muted); }
+  .terms { display: flex; flex-wrap: wrap; gap: 6px; padding: 6px 10px 10px; }
+  .term { border: 1px solid var(--line); border-radius: 12px; padding: 2px 8px; background: #fff; cursor: pointer; font-size: 12px; }
+  .term:hover { border-color: var(--blue); }
+  .term b { color: var(--blue); font-weight: 600; }
+  .term.nt b { color: var(--warn); }
+  .empty { padding: 8px 10px; color: var(--muted); font-style: italic; }
+  #grid { flex: 1; overflow: auto; }
+  table { width: 100%; border-collapse: collapse; }
+  th { position: sticky; top: 0; background: #f3f3f3; font-weight: 600; text-align: left; font-size: 11px; padding: 4px 6px; border-bottom: 1px solid var(--line); }
+  td { padding: 5px 6px; border-bottom: 1px solid var(--line); vertical-align: top; line-height: 1.35; }
+  tr { cursor: pointer; }
+  tr:hover td { background: var(--blue-soft); }
+  tr.current td { background: var(--blue-soft); box-shadow: inset 3px 0 0 var(--blue); }
+  td.n { color: var(--muted); width: 28px; text-align: right; }
+  td.st { width: 18px; text-align: center; }
+  td.st.confirmed { color: var(--ok); }
+  td.st.draft { color: var(--warn); }
+  footer { padding: 4px 10px; font-size: 11px; color: var(--muted); background: #fff; border-top: 1px solid var(--line); }
+</style>
+</head>
+<body>
+<header>
+  <span class="brand">Supervertaler</span>
+  <span>for Word</span>
+  <span class="counts" id="counts"></span>
+</header>
+<main>
+  <section id="segment">
+    <h2>Segment <span class="pill" id="segid"></span></h2>
+    <div id="src">Click into a sentence in the document.</div>
+    <textarea id="tgt" placeholder="Target"></textarea>
+    <div class="row">
+      <button id="confirm" disabled>Confirm &amp; next</button>
+      <button id="draftall" class="ghost">Draft all (mock)</button>
+      <span class="status" id="status"></span>
+      <span class="hint">Ctrl+Enter confirms</span>
+    </div>
+  </section>
+  <section id="matches">
+    <h2>Translation memory <span class="pill" id="tmcount"></span></h2>
+    <div id="tmlist"><div class="empty">No segment selected.</div></div>
+    <h2>Termbase <span class="pill" id="tbcount"></span></h2>
+    <div class="terms" id="terms"></div>
+  </section>
+  <section id="grid">
+    <table>
+      <thead><tr><th>#</th><th></th><th>Source</th><th>Target</th></tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </section>
+</main>
+<footer id="foot">Loading Office.js…</footer>
+
+<script>
+// ------------------------------------------------------------------ mock engine
+// Stands in for the local engine (Workbench TM + termbase over localhost).
+const MOCK_TM = [
+  ["A mashup is a Web application that combines data from two or more sources.",
+   "Een mashup is een webtoepassing die gegevens uit twee of meer bronnen combineert.", "Mashups_2024"],
+  ["The term implies easy, fast integration, frequently done by access to open APIs.",
+   "De term impliceert een eenvoudige, snelle integratie, vaak via toegang tot open API's.", "Mashups_2024"],
+  ["An example of a mashup is the use of cartographic data to add location information to real estate data.",
+   "Een voorbeeld van een mashup is het gebruik van cartografische gegevens om locatie-informatie toe te voegen aan vastgoedgegevens.", "Mashups_2024"],
+  ["This creates a new and distinct Web service.",
+   "Dit creëert een nieuwe en onderscheidende webdienst.", "Mashups_2024"],
+];
+const MOCK_TB = [
+  ["mashup", "mashup", "nt"], ["Web application", "webtoepassing", ""],
+  ["cartographic data", "cartografische gegevens", ""], ["mapping program", "kaarttoepassing", ""],
+  ["Web service", "webdienst", ""], ["integration", "integratie", ""], ["data", "gegevens", ""],
+];
+const words = s => s.toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, " ").split(/\s+/).filter(Boolean);
+function lcs(a, b) {                      // word-level LCS table for diff + score
+  const m = a.length, n = b.length, d = Array.from({length: m + 1}, () => new Array(n + 1).fill(0));
+  for (let i = m - 1; i >= 0; i--) for (let j = n - 1; j >= 0; j--)
+    d[i][j] = a[i] === b[j] ? d[i + 1][j + 1] + 1 : Math.max(d[i + 1][j], d[i][j + 1]);
+  return d;
+}
+function fuzzy(source) {
+  const q = words(source);
+  return MOCK_TM.map(([s, t, name]) => {
+    const w = words(s), d = lcs(q, w);
+    const pct = Math.round(100 * 2 * d[0][0] / (q.length + w.length));
+    // render TM source with words that differ from the current source marked
+    let i = 0, j = 0, html = [];
+    while (i < q.length || j < w.length) {
+      if (i < q.length && j < w.length && q[i] === w[j]) { html.push(w[j]); i++; j++; }
+      else if (j < w.length && (i >= q.length || d[i][j + 1] >= d[i + 1][j])) { html.push("<del>" + w[j] + "</del>"); j++; }
+      else { html.push("<ins>" + q[i] + "</ins>"); i++; }
+    }
+    return {pct, s: html.join(" "), t, name};
+  }).filter(m => m.pct >= 50).sort((a, b) => b.pct - a.pct).slice(0, 5);
+}
+function termHits(source) {
+  const low = source.toLowerCase();
+  return MOCK_TB.filter(([en]) => low.includes(en.toLowerCase()));
+}
+const esc = s => s.replace(/[&<>]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;"}[c]));
+
+// ------------------------------------------------------------------ document
+const NS = "urn:supervertaler:word:1", TAG = "sv:seg:";
+let record = null;               // {sourceLang, targetLang, segments:[{id,source,target,status,origin}]}
+let currentId = null;
+const $ = id => document.getElementById(id);
+
+async function loadRecord() {
+  await Word.run(async ctx => {
+    const parts = ctx.document.customXmlParts.getByNamespace(NS);
+    parts.load("items");
+    await ctx.sync();
+    if (!parts.items.length) { record = null; return; }
+    const xml = parts.items[0].getXml();
+    await ctx.sync();
+    const doc = new DOMParser().parseFromString(xml.value, "text/xml");
+    const root = doc.documentElement;
+    record = {
+      sourceLang: root.getAttribute("source_lang"), targetLang: root.getAttribute("target_lang"),
+      segments: [...doc.getElementsByTagNameNS(NS, "segment")].map(el => ({
+        id: el.getAttribute("id"), status: el.getAttribute("status") || "draft",
+        origin: el.getAttribute("origin") || "",
+        source: el.getElementsByTagNameNS(NS, "source")[0]?.textContent || "",
+        target: el.getElementsByTagNameNS(NS, "target")[0]?.textContent || "",
+      })),
+    };
+  });
+}
+
+function recordXml() {
+  const x = new XMLSerializer(), d = document.implementation.createDocument(NS, "sv:project");
+  const root = d.documentElement;
+  root.setAttribute("source_lang", record.sourceLang); root.setAttribute("target_lang", record.targetLang);
+  for (const s of record.segments) {
+    const el = d.createElementNS(NS, "sv:segment");
+    el.setAttribute("id", s.id); el.setAttribute("status", s.status);
+    el.setAttribute("origin", s.origin); el.setAttribute("match", "0");
+    const so = d.createElementNS(NS, "sv:source"); so.textContent = s.source;
+    const ta = d.createElementNS(NS, "sv:target"); ta.textContent = s.target;
+    el.append(so, ta); root.appendChild(el);
+  }
+  return x.serializeToString(d);
+}
+
+async function saveRecord(ctx) {
+  const parts = ctx.document.customXmlParts.getByNamespace(NS);
+  parts.load("items");
+  await ctx.sync();
+  for (const p of parts.items) p.delete();
+  ctx.document.customXmlParts.add(recordXml());
+  await ctx.sync();
+}
+
+async function currentSegment() {
+  return Word.run(async ctx => {
+    const cc = ctx.document.getSelection().parentContentControlOrNullObject;
+    cc.load("isNullObject,tag,title,text");
+    await ctx.sync();
+    if (cc.isNullObject || !cc.tag.startsWith(TAG)) return null;
+    return {id: cc.tag.slice(TAG.length), title: cc.title, text: cc.text};
+  });
+}
+
+async function selectSegment(id) {
+  await Word.run(async ctx => {
+    const ccs = ctx.document.contentControls.getByTag(TAG + id);
+    ccs.load("items");
+    await ctx.sync();
+    if (ccs.items.length) { ccs.items[0].select("Select"); await ctx.sync(); }
+  });
+}
+
+async function writeBack(id, target, status) {
+  await Word.run(async ctx => {
+    ctx.document.changeTrackingMode = Word.ChangeTrackingMode.trackAll;
+    const ccs = ctx.document.contentControls.getByTag(TAG + id);
+    ccs.load("items");
+    await ctx.sync();
+    if (!ccs.items.length) return;
+    const cc = ccs.items[0];
+    cc.insertText(target, "Replace");
+    cc.title = status;
+    const seg = record.segments.find(s => s.id === id);
+    if (seg) { seg.target = target; seg.status = status; seg.origin = "human"; }
+    await saveRecord(ctx);
+  });
+}
+
+// ------------------------------------------------------------------ UI
+function renderCounts() {
+  if (!record) { $("counts").textContent = ""; return; }
+  const n = record.segments.length, c = record.segments.filter(s => s.status === "confirmed").length;
+  $("counts").textContent = `${c} / ${n} confirmed`;
+}
+
+function renderGrid() {
+  const tb = $("rows"); tb.innerHTML = "";
+  if (!record) { tb.innerHTML = '<tr><td colspan="4" class="empty">No Supervertaler record in this document.</td></tr>'; return; }
+  record.segments.forEach((s, i) => {
+    const tr = document.createElement("tr");
+    tr.dataset.id = s.id;
+    if (s.id === currentId) tr.className = "current";
+    tr.innerHTML = `<td class="n">${i + 1}</td><td class="st ${s.status}">${s.status === "confirmed" ? "✓" : "✎"}</td>` +
+                   `<td>${esc(s.source)}</td><td>${esc(s.target)}</td>`;
+    tr.onclick = () => selectSegment(s.id);
+    tb.appendChild(tr);
+  });
+  const cur = tb.querySelector("tr.current");
+  if (cur) cur.scrollIntoView({block: "nearest"});
+}
+
+function highlightTerms(source, hits) {
+  let html = esc(source);
+  for (const [en] of hits) html = html.replace(new RegExp("(" + en.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + ")", "i"), "<mark>$1</mark>");
+  return html;
+}
+
+function renderSegment(seg, live) {
+  $("segid").textContent = seg ? seg.id : "";
+  $("confirm").disabled = !seg;
+  if (!seg) {
+    $("src").textContent = "Click into a sentence in the document.";
+    $("tgt").value = ""; $("status").textContent = "";
+    $("tmlist").innerHTML = '<div class="empty">No segment selected.</div>'; $("terms").innerHTML = "";
+    $("tmcount").textContent = ""; $("tbcount").textContent = "";
+    return;
+  }
+  const hits = termHits(seg.source);
+  $("src").innerHTML = highlightTerms(seg.source, hits);
+  $("tgt").value = live ?? seg.target;
+  $("status").textContent = seg.status + (seg.origin ? " · " + seg.origin : "");
+  $("status").className = "status " + seg.status;
+
+  const tm = fuzzy(seg.source);
+  $("tmcount").textContent = tm.length ? `${tm.length} match${tm.length > 1 ? "es" : ""}` : "";
+  $("tmlist").innerHTML = tm.length ? tm.map(m =>
+    `<div class="tm" data-t="${esc(m.t)}"><span class="pct ${m.pct === 100 ? "exact" : ""}">${m.pct}%</span>` +
+    `<span class="s">${m.s}</span><div class="t">${esc(m.t)}</div><div class="meta">${m.name}</div></div>`).join("")
+    : '<div class="empty">No TM match.</div>';
+  for (const el of $("tmlist").querySelectorAll(".tm")) el.onclick = () => { $("tgt").value = el.dataset.t; $("tgt").focus(); };
+
+  $("tbcount").textContent = hits.length ? `${hits.length} term${hits.length > 1 ? "s" : ""}` : "";
+  $("terms").innerHTML = hits.map(([en, nl, kind]) =>
+    `<span class="term ${kind}" data-nl="${esc(nl)}">${esc(en)} → <b>${esc(nl)}</b>${kind === "nt" ? " · NT" : ""}</span>`).join("");
+  for (const el of $("terms").querySelectorAll(".term")) el.onclick = () => insertAtCursor($("tgt"), el.dataset.nl);
+}
+
+function insertAtCursor(ta, text) {
+  const a = ta.selectionStart, b = ta.selectionEnd;
+  ta.value = ta.value.slice(0, a) + text + ta.value.slice(b);
+  ta.selectionStart = ta.selectionEnd = a + text.length; ta.focus();
+}
+
+async function onSelectionChanged() {
+  try {
+    const cur = await currentSegment();
+    const id = cur ? cur.id : null;
+    if (id !== currentId) {
+      currentId = id;
+      const seg = record && record.segments.find(s => s.id === id);
+      renderSegment(seg || null, cur ? cur.text : undefined);
+      renderGrid();
+    }
+  } catch (e) { $("foot").textContent = "Error: " + e.message; }
+}
+
+async function confirmAndNext() {
+  if (!currentId || !record) return;
+  const id = currentId, idx = record.segments.findIndex(s => s.id === id);
+  await writeBack(id, $("tgt").value.trim(), "confirmed");
+  renderCounts();
+  const next = record.segments[idx + 1];
+  if (next) await selectSegment(next.id); else { currentId = null; renderSegment(null); renderGrid(); }
+}
+
+async function draftAll() {
+  // Mock of "draft the whole document": the real button calls the local engine.
+  if (!record) return;
+  $("draftall").disabled = true;
+  for (const s of record.segments) {
+    if (s.status === "confirmed") continue;
+    const best = fuzzy(s.source)[0];
+    if (best) await writeBack(s.id, best.t, "draft");
+  }
+  $("draftall").disabled = false;
+  renderCounts(); renderGrid();
+}
+
+Office.onReady(async info => {
+  if (info.host !== Office.HostType.Word) { $("foot").textContent = "Open this pane in Word."; return; }
+  await loadRecord();
+  renderCounts(); renderGrid();
+  Office.context.document.addHandlerAsync(Office.EventType.DocumentSelectionChanged, onSelectionChanged);
+  $("confirm").onclick = confirmAndNext;
+  $("draftall").onclick = draftAll;
+  $("tgt").addEventListener("keydown", e => { if (e.ctrlKey && e.key === "Enter") { e.preventDefault(); confirmAndNext(); } });
+  $("foot").textContent = record ? `Record loaded: ${record.sourceLang} → ${record.targetLang}. Matches are a mock; the real pane asks the local engine.`
+                                 : "This document has no Supervertaler record yet.";
+  onSelectionChanged();
+});
+</script>
+</body>
+</html>

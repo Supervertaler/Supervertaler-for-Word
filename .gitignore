@@ -5,3 +5,4 @@ spike/out/
 *.tmp
 .env
 /roundtrip.docx
+_register.cmd
