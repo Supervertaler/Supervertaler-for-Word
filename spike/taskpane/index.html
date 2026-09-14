@@ -312,13 +312,16 @@ function renderLens(source, hits) {
   words(source.slice(pos));
   closePicker();
 }
+let pickerFor = null;
 function openPicker(h) {
+  if (pickerFor === h) { closePicker(); return; }      // second click folds it away
+  pickerFor = h;
   const p = $("picker");
   p.innerHTML = h.nl.map((t, i) => `<div data-t="${esc(t)}"><span class="k">${String.fromCharCode(97 + i)}</span><b>${esc(t)}</b><span class="src">${esc(h.en)} · mock</span></div>`).join("");
   for (const row of p.children) row.onclick = () => { insertTerm(row.dataset.t); closePicker(); };
   p.className = "open";
 }
-function closePicker() { $("picker").className = ""; $("picker").innerHTML = ""; }
+function closePicker() { pickerFor = null; $("picker").className = ""; $("picker").innerHTML = ""; }
 function insertTerm(text) { insertAtCursor($("tgt"), text); }
 document.addEventListener("keydown", e => {
   if (e.altKey && e.key >= "1" && e.key <= "9") {
