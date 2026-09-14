@@ -2,8 +2,7 @@
 
 **A CAT tool that lives inside Microsoft Word. The document is the project.**
 
-<!-- screenshot: paste the task pane screenshot here -->
-*Screenshot coming.*
+<img width="2560" height="1440" alt="image" src="https://github.com/user-attachments/assets/179cfea8-6efc-455b-a0b0-ae549bad4242" />
 
 *Word shows the clean target text. The pane shows the sentence under the cursor
 with its source, TM matches with differences marked, termbase hits, and a grid
