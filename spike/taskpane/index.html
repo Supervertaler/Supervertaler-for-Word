@@ -194,9 +194,13 @@ async function saveRecord(ctx) {
 
 async function currentSegment() {
   return Word.run(async ctx => {
-    const cc = ctx.document.getSelection().parentContentControlOrNullObject;
+    const sel = ctx.document.getSelection();
+    let cc = sel.parentContentControlOrNullObject;
     cc.load("isNullObject,tag,title,text");
+    const inside = sel.contentControls;               // controls wholly within the selection
+    inside.load("items/tag,items/title,items/text");
     await ctx.sync();
+    if (cc.isNullObject && inside.items.length === 1) cc = inside.items[0];
     if (cc.isNullObject || !cc.tag.startsWith(TAG)) return null;
     return {id: cc.tag.slice(TAG.length), title: cc.title, text: cc.text};
   });
@@ -219,7 +223,19 @@ async function writeBack(id, target, status) {
     await ctx.sync();
     if (!ccs.items.length) return;
     const cc = ccs.items[0];
-    cc.insertText(target, "Replace");
+    // Replace only the LIVE text. Replacing the whole control would also sweep
+    // up the hidden deleted source and re-attribute that deletion to the user.
+    const changes = cc.getRange().getTrackedChanges();
+    changes.load("items/type");
+    await ctx.sync();
+    const insertions = changes.items.filter(c => c.type === "Added");
+    const hasDeletion = changes.items.some(c => c.type === "Deleted");
+    if (!hasDeletion) {
+      cc.insertText(target, "Replace");          // first translation: source becomes the deletion
+    } else {
+      cc.insertText(target, "Start");            // new target in front...
+      for (const ins of insertions) ins.getRange().delete();   // ...old live text out
+    }
     cc.title = status;
     const seg = record.segments.find(s => s.id === id);
     if (seg) { seg.target = target; seg.status = status; seg.origin = "human"; }
@@ -311,7 +327,11 @@ async function confirmAndNext() {
   await writeBack(id, $("tgt").value.trim(), "confirmed");
   renderCounts();
   const next = record.segments[idx + 1];
-  if (next) await selectSegment(next.id); else { currentId = null; renderSegment(null); renderGrid(); }
+  if (next) {
+    await selectSegment(next.id);
+    currentId = next.id; renderSegment(next); renderGrid();
+    $("tgt").focus();
+  } else { currentId = null; renderSegment(null); renderGrid(); }
 }
 
 async function draftAll() {
