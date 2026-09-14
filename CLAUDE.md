@@ -19,8 +19,13 @@ Experimental CAT tool living inside Word. Read README.md first; it is short.
 
 - Constants are ints (no makepy). wdContentControlRichText=0, wdSentence=3,
   wdRevisionInsert=1, wdRevisionDelete=2, wdFormatXMLDocument=16.
-- `Range.Text` includes deleted-revision text. Read source/target through
-  `Range.Revisions`, never from `Range.Text` alone.
+- `Range.Text` EXCLUDES deleted-revision text (in every markup view), but
+  `Range.Start/End` still count those characters. So target = `Range.Text`;
+  source = the Supervertaler-authored deletions in `Range.Revisions`. Never map
+  revision offsets onto `Range.Text` indices.
+- The Revisions collection can list a nested revision twice; dedupe by span.
+- A user deleting inside the AI insertion with tracking on creates a deletion
+  in the user's name; filter by author or it pollutes the source.
 - Setting `cc.Range.Text` while `doc.TrackRevisions` is on records delete+insert
   in one go. The content control survives Accept All and Reject All.
 - `CustomXMLParts.SelectByNamespace(ns)` finds the project record; it is

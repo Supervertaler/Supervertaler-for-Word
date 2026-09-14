@@ -4,3 +4,4 @@ spike/out/
 ~$*.docx
 *.tmp
 .env
+/roundtrip.docx

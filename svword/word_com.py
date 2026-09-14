@@ -106,18 +106,34 @@ def set_target(app, doc, cc, target: str, status: str = "draft"):
     cc.Title = status
 
 
+def _supervertaler_deletions(cc):
+    """Deleted revisions made by Supervertaler inside an anchor, in document
+    order, deduplicated by span (Word's Revisions collection can list a nested
+    revision twice)."""
+    seen, out = set(), []
+    for r in cc.Range.Revisions:
+        if r.Type != WD_REV_DELETE or r.Author != REVISION_AUTHOR:
+            continue
+        key = (r.Range.Start, r.Range.End)
+        if key not in seen:
+            seen.add(key)
+            out.append((key, r.Range.Text))
+    return [t for _, t in sorted(out)]
+
+
 def source_of(cc) -> str:
-    """Source text of an anchor = its deleted revisions; falls back to the
-    live text when nothing has been translated yet."""
-    deleted = "".join(r.Range.Text for r in cc.Range.Revisions if r.Type == WD_REV_DELETE)
-    return deleted if deleted else cc.Range.Text
+    """Source text = what Supervertaler deleted when it wrote the target. The
+    XML project record is the authority; this reads it from the document
+    alone. An untranslated anchor returns its live text."""
+    deleted = _supervertaler_deletions(cc)
+    return "".join(deleted) if deleted else cc.Range.Text
 
 
 def target_of(cc) -> str:
-    """Target text = the live text minus deleted revisions."""
-    if any(r.Type == WD_REV_DELETE for r in cc.Range.Revisions):
-        return "".join(r.Range.Text for r in cc.Range.Revisions if r.Type == WD_REV_INSERT)
-    return ""
+    """Target text = the anchor's live text. Range.Text already excludes every
+    deleted revision, whoever made it, and includes text typed with tracking
+    off. An untranslated anchor has no target yet."""
+    return cc.Range.Text if _supervertaler_deletions(cc) else ""
 
 
 # --------------------------------------------------------------------- comments
