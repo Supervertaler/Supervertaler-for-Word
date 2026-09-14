@@ -41,6 +41,40 @@ grid still knows which segment is which, because the anchors moved with the
 text. What you are looking at while you translate is the deliverable, in its
 final format, at every moment.
 
+## There is no project file
+
+The project file is the Word document. Literally.
+
+Few people know it, but a .docx is a zip archive. Rename one to .zip and open
+it: the text is in one XML file, the styles in another, the comments in
+another, and so on. Word reads the parts it knows and carries the rest around
+untouched. Our project record is one more part inside that zip. When you email
+the document, copy it to another machine, or open it in six months, the project
+travels with it, because it *is* the document.
+
+| Inside the .docx | What it holds |
+|---|---|
+| The main document text | The target text, live, exactly as Word shows it |
+| Tracked changes | The source, as a deletion under each target |
+| Content controls | The segment anchors and their status |
+| Comments | Match info now; the agent's questions later |
+| One custom XML part | The record: language pair, and every segment's id, source, target, status and origin |
+
+The record is small, one element per segment, so a 300-page document grows by
+a few hundred kilobytes. It is also redundant on purpose: source and target can
+be rebuilt from the tracked changes alone, which is what the round-trip tests
+prove. Lose the record and the document still knows everything.
+
+What is *not* in the file, and never will be: the translation memory and the
+termbases. Those span many jobs and stay in the local engine. The document
+only ever holds its own sentences, so when it leaves your machine nothing of
+your TM goes with it beyond the sentences the client is paying for.
+
+Two consequences. Delivery is a save: Accept All Changes and the file is the
+deliverable, or send it as it is and let the client see the bilingual view.
+And cleaning is optional: a strip command can remove the anchors and the
+record for clients who want a plain file.
+
 ## Why tags mostly disappear
 
 In Trados or memoQ, tags exist because the editor is not the document.
