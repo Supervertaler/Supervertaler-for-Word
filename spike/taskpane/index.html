@@ -367,7 +367,10 @@ function renderLens(source, hits) {
   let pos = 0;
   let unit = 0;
   const mkUnit = (el, text) => { el.dataset.u = unit++; el.dataset.t = text; el.classList.add("u"); el.addEventListener("click", ev => { ev.stopPropagation(); lensClick(+el.dataset.u); }); };
-  const words = (text) => { for (const w of text.split(/(\s+)/)) if (w.trim()) { const el = document.createElement("span"); el.className = "w"; el.textContent = w; mkUnit(el, w); box.appendChild(el); } };
+  const words = (text) => { for (const w of text.split(/(\s+)/)) {
+    if (!w) continue;
+    if (!w.trim()) { if (mode !== "lens") box.appendChild(document.createTextNode(w)); continue; }   // plain mode keeps the spaces
+    const el = document.createElement("span"); el.className = "w"; el.textContent = w; mkUnit(el, w); box.appendChild(el); } };
   for (const h of hits) {
     words(source.slice(pos, h.start));
     const el = document.createElement("span");
