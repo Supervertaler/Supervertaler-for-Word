@@ -12,8 +12,7 @@
   * { box-sizing: border-box; }
   html, body { margin: 0; height: 100%; font: 13px "Segoe UI", system-ui, sans-serif; color: var(--ink); background: var(--bg); }
   body { display: flex; flex-direction: column; }
-  header { display: flex; align-items: center; gap: 8px; padding: 8px 10px; background: #fff; border-bottom: 1px solid var(--line); }
-  header .brand { font-weight: 600; color: var(--blue); }
+  header { display: flex; align-items: center; padding: 6px 10px; background: #fff; border-bottom: 1px solid var(--line); min-height: 28px; }
   header .counts { margin-left: auto; color: var(--muted); font-size: 12px; }
   main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
   section { border-bottom: 1px solid var(--line); background: #fff; }
@@ -81,8 +80,6 @@
 </head>
 <body>
 <header>
-  <span class="brand">Supervertaler</span>
-  <span>for Word</span>
   <span class="counts" id="counts"></span>
 </header>
 <main>
