@@ -90,7 +90,7 @@
     <h2>Segment <span class="pill" id="segid"></span></h2>
     <div id="src">Click into a sentence in the document.</div>
     <div id="picker"></div>
-    <textarea id="tgt" placeholder="Target"></textarea>
+    <textarea id="tgt" placeholder="Target" spellcheck="true"></textarea>
     <div class="row">
       <button id="confirm" disabled>Confirm &amp; next</button>
       <button id="draftall" class="ghost">Draft all (mock)</button>
@@ -365,15 +365,59 @@ function insertAtCursor(ta, text) {
   ta.selectionStart = ta.selectionEnd = a + text.length; ta.focus();
 }
 
+// Live mirror. While the cursor is in a segment, Word's text is polled and the
+// target box follows it, unless the translator is typing in the box. Word is
+// the truth; the pane writes to Word only on Confirm.
+let mirrorTimer = null, lastWordText = null, mirrorBusy = false;
+async function readCurrentText(id) {
+  return Word.run(async ctx => {
+    const ccs = ctx.document.contentControls.getByTag(TAG + id);
+    ccs.load("items/text");
+    await ctx.sync();
+    return ccs.items.length ? ccs.items[0].text : null;
+  });
+}
+async function mirrorTick() {
+  if (!currentId || mirrorBusy) return;
+  mirrorBusy = true;
+  try {
+    const text = await readCurrentText(currentId);
+    if (text !== null && text !== lastWordText) {
+      lastWordText = text;
+      const seg = record && record.segments.find(s => s.id === currentId);
+      if (seg && seg.target !== text) {
+        seg.target = text; seg.dirty = true;
+        const cell = $("rows").querySelector(`tr[data-id="${currentId}"] td:last-child`);
+        if (cell) cell.textContent = text;
+      }
+      if (document.activeElement !== $("tgt")) $("tgt").value = text;
+    }
+  } catch (e) { /* segment vanished mid-tick; the next selection change sorts it out */ }
+  finally { mirrorBusy = false; }
+}
+function startMirror() { stopMirror(); lastWordText = null; mirrorTimer = setInterval(mirrorTick, 500); }
+function stopMirror() { if (mirrorTimer) clearInterval(mirrorTimer); mirrorTimer = null; }
+async function flushRecord() {
+  // called when leaving a segment: persist what Word said while we were there
+  if (record && record.segments.some(s => s.dirty)) {
+    record.segments.forEach(s => delete s.dirty);
+    await Word.run(saveRecord);
+    renderCounts();
+  }
+}
+
 async function onSelectionChanged() {
   try {
     const cur = await currentSegment();
     const id = cur ? cur.id : null;
     if (id !== currentId) {
+      stopMirror();
+      await flushRecord();
       currentId = id;
       const seg = record && record.segments.find(s => s.id === id);
       renderSegment(seg || null, cur ? cur.text : undefined);
       renderGrid();
+      if (id) { lastWordText = cur.text; startMirror(); }
     }
   } catch (e) { $("foot").textContent = "Error: " + e.message; }
 }
@@ -381,12 +425,14 @@ async function onSelectionChanged() {
 async function confirmAndNext() {
   if (!currentId || !record) return;
   const id = currentId, idx = record.segments.findIndex(s => s.id === id);
+  stopMirror();
   await writeBack(id, $("tgt").value.trim(), "confirmed");
   renderCounts();
   const next = record.segments[idx + 1];
   if (next) {
     await selectSegment(next.id);
     currentId = next.id; renderSegment(next); renderGrid();
+    lastWordText = next.target; startMirror();
     $("tgt").focus();
   } else { currentId = null; renderSegment(null); renderGrid(); }
 }
@@ -407,6 +453,7 @@ async function draftAll() {
 Office.onReady(async info => {
   if (info.host !== Office.HostType.Word) { $("foot").textContent = "Open this pane in Word."; return; }
   await loadRecord();
+  if (record) { $("tgt").lang = record.targetLang; $("src").lang = record.sourceLang; }
   renderCounts(); renderGrid();
   Office.context.document.addHandlerAsync(Office.EventType.DocumentSelectionChanged, onSelectionChanged);
   $("confirm").onclick = confirmAndNext;
