@@ -138,13 +138,58 @@ Home > Add-ins > More Add-ins > Developer Add-ins > Supervertaler for Word.
 After the first time there is a Supervertaler button on the Home tab.
 Set Review > No Markup.
 
+## What is installed, and what will be
+
+Today nothing is installed; the spike is three loose pieces. The pane is a few
+static files served from localhost by a Python web server. The manifest is an
+XML file registered in the user's registry as a developer add-in, which is
+what puts the Supervertaler button on Word's ribbon. And the Python side
+anchors documents and runs the tests. Another person would need the repo,
+Python, the server and the registration script. That is a developer setup.
+
+The product is one local application, the local engine:
+
+1. **The engine** runs in the background. It serves the pane's files on a
+   localhost port and answers the pane's requests: TM matches, termbase hits,
+   LLM drafts, Prepare document. Python, packaged the way the Workbench is,
+   with a Mac build the same way.
+2. **The installer** copies the engine, writes a manifest pointing at the
+   engine's port, and registers it: a registry key on Windows, a manifest
+   folder on Mac. Word shows the button on next start.
+3. **Later, for reach**: the pane's static files hosted on a Supervertaler
+   subdomain and the manifest listed in Microsoft's add-in store, so Word users
+   find it under Add-ins and only the engine needs a download. A pane loaded
+   over https can talk to the local engine because Word's browser exempts
+   localhost from mixed-content blocking. To be verified before relying on it.
+
+## Licensing
+
+The pane is JavaScript served to a browser and cannot be protected, and does
+not need to be. The engine is where the value is, so the engine is the gate,
+using the same Lemon Squeezy flow as Supervertaler for Trados:
+
+- activate a key against Lemon Squeezy with a machine instance name, validate
+  on start-up and periodically, deactivate when moving machines. Their
+  per-key activation limit gives per-seat control.
+- cache the last successful validation and allow a set number of days offline,
+  then fall back to a "please reconnect" state. No home-grown cryptography,
+  the engine is not worth attacking.
+- the pane asks the engine for licence status on start and shows a key entry
+  screen if needed. The document itself keeps working; what stops without a
+  licence is what the engine provides.
+- no key ever lives in the pane.
+
+A document anchored by a licensed user opens in Word for anyone, bilingual
+view included. Only translating needs the product.
+
 ## Roadmap
 
 1. **Prepare document** in the pane: segment and anchor a fresh Word file.
 2. **Local engine** on localhost in front of the Workbench TM, termbase and LLM code.
 3. **Formatting-safe write-back**: bold, italics, links and fields inside a sentence survive confirm.
 4. **The Workbench segmenter** instead of Word's sentence detection.
-5. **Packaging**: the engine serves the pane, an installer registers the add-in.
+5. **Packaging**: the engine serves the pane, an installer registers the add-in,
+   licensing through Lemon Squeezy in the engine.
 
 Then: agent questions as comments, a rulebook learned from what the translator
 changes, and Draft All backed by the Otto pipeline running locally.
