@@ -21,7 +21,25 @@
   section h2 .pill { margin-left: auto; font-weight: 400; text-transform: none; letter-spacing: 0; }
   #segment { padding: 0 10px 10px; }
   #src { padding: 8px; background: var(--blue-soft); border-radius: 4px; min-height: 42px; line-height: 1.45; }
-  #src mark { background: var(--hit); padding: 0 1px; border-radius: 2px; }
+  #src.lens { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 2px 6px; row-gap: 6px; padding: 8px 8px 6px; }
+  .lens .w { line-height: 1.4; }
+  .lens .hit { display: inline-flex; flex-direction: column; align-items: flex-start; cursor: pointer; border-radius: 3px; padding: 0 2px; margin: 0 -2px; }
+  .lens .hit:hover { background: #dbe7fa; }
+  .lens .hit .ws { line-height: 1.4; border-bottom: 2px solid var(--blue); }
+  .lens .hit .tt { font-size: 11.5px; color: var(--blue); font-weight: 600; white-space: nowrap; line-height: 1.3; margin-top: 2px; }
+  .lens .hit.nt .ws { border-bottom-color: var(--warn); }
+  .lens .hit.nt .tt { color: var(--warn); }
+  .lens .hit .n { display: inline-block; min-width: 14px; height: 14px; line-height: 14px; text-align: center; font-size: 9.5px; font-weight: 700; color: #fff; background: var(--blue); border-radius: 7px; margin-left: 4px; vertical-align: 1px; }
+  .lens .hit.nt .n { background: var(--warn); }
+  .lens .hit .more { font-weight: 400; color: var(--muted); margin-left: 3px; }
+  #picker { display: none; margin: 4px 0 0; border: 1px solid var(--line); border-radius: 4px; background: #fff; overflow: hidden; }
+  #picker.open { display: block; }
+  #picker div { display: flex; gap: 8px; padding: 4px 8px; cursor: pointer; border-top: 1px solid var(--line); }
+  #picker div:first-child { border-top: 0; }
+  #picker div:hover { background: var(--blue-soft); }
+  #picker .k { min-width: 16px; color: var(--muted); font-size: 11px; }
+  #picker b { color: var(--blue); font-weight: 600; }
+  #picker .src { color: var(--muted); margin-left: auto; font-size: 11px; }
   #tgt { width: 100%; margin-top: 8px; min-height: 64px; padding: 8px; border: 1px solid var(--line); border-radius: 4px; font: inherit; line-height: 1.45; resize: vertical; }
   #tgt:focus { outline: 2px solid var(--blue); border-color: transparent; }
   .row { display: flex; gap: 8px; align-items: center; margin-top: 8px; }
@@ -71,19 +89,18 @@
   <section id="segment">
     <h2>Segment <span class="pill" id="segid"></span></h2>
     <div id="src">Click into a sentence in the document.</div>
+    <div id="picker"></div>
     <textarea id="tgt" placeholder="Target"></textarea>
     <div class="row">
       <button id="confirm" disabled>Confirm &amp; next</button>
       <button id="draftall" class="ghost">Draft all (mock)</button>
       <span class="status" id="status"></span>
-      <span class="hint">Ctrl+Enter confirms</span>
+      <span class="hint">Alt+1…9 inserts a term · Ctrl+Enter confirms</span>
     </div>
   </section>
   <section id="matches">
     <h2>Translation memory <span class="pill" id="tmcount"></span></h2>
     <div id="tmlist"><div class="empty">No segment selected.</div></div>
-    <h2>Termbase <span class="pill" id="tbcount"></span></h2>
-    <div class="terms" id="terms"></div>
   </section>
   <section id="grid">
     <table>
@@ -108,9 +125,10 @@ const MOCK_TM = [
    "Dit creëert een nieuwe en onderscheidende webdienst.", "Mashups_2024"],
 ];
 const MOCK_TB = [
-  ["mashup", "mashup", "nt"], ["Web application", "webtoepassing", ""],
-  ["cartographic data", "cartografische gegevens", ""], ["mapping program", "kaarttoepassing", ""],
-  ["Web service", "webdienst", ""], ["integration", "integratie", ""], ["data", "gegevens", ""],
+  ["mashup", ["mashup"], "nt"], ["Web application", ["webtoepassing", "webapplicatie"], ""],
+  ["cartographic data", ["cartografische gegevens", "kaartgegevens"], ""],
+  ["mapping program", ["kaarttoepassing", "kaartprogramma"], ""],
+  ["Web service", ["webdienst"], ""], ["integration", ["integratie"], ""], ["data", ["gegevens", "data"], ""],
 ];
 const words = s => s.toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, " ").split(/\s+/).filter(Boolean);
 function lcs(a, b) {                      // word-level LCS table for diff + score
@@ -135,8 +153,16 @@ function fuzzy(source) {
   }).filter(m => m.pct >= 50).sort((a, b) => b.pct - a.pct).slice(0, 5);
 }
 function termHits(source) {
-  const low = source.toLowerCase();
-  return MOCK_TB.filter(([en]) => low.includes(en.toLowerCase()));
+  const low = source.toLowerCase(), hits = [];
+  for (const [en, nl, kind] of MOCK_TB) {
+    const i = low.indexOf(en.toLowerCase());
+    if (i >= 0) hits.push({en, nl, kind, start: i, end: i + en.length});
+  }
+  hits.sort((a, b) => a.start - b.start || (b.end - b.start) - (a.end - a.start));
+  const out = []; let last = -1;                    // drop overlaps, keep the earlier/longer
+  for (const h of hits) if (h.start >= last) { out.push(h); last = h.end; }
+  out.forEach((h, i) => h.n = i + 1);
+  return out;
 }
 const esc = s => s.replace(/[&<>]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;"}[c]));
 
@@ -266,24 +292,56 @@ function renderGrid() {
   if (cur) cur.scrollIntoView({block: "nearest"});
 }
 
-function highlightTerms(source, hits) {
-  let html = esc(source);
-  for (const [en] of hits) html = html.replace(new RegExp("(" + en.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + ")", "i"), "<mark>$1</mark>");
-  return html;
+let lensHits = [];
+function renderLens(source, hits) {
+  lensHits = hits;
+  const box = $("src"); box.className = "lens"; box.innerHTML = "";
+  let pos = 0;
+  const words = (text) => { for (const w of text.split(/(\s+)/)) if (w.trim()) { const el = document.createElement("span"); el.className = "w"; el.textContent = w; box.appendChild(el); } };
+  for (const h of hits) {
+    words(source.slice(pos, h.start));
+    const el = document.createElement("span");
+    el.className = "hit" + (h.kind === "nt" ? " nt" : "");
+    el.innerHTML = `<span class="ws">${esc(source.slice(h.start, h.end))}</span>` +
+      `<span class="tt">${esc(h.nl[0])}${h.kind === "nt" ? " · NT" : ""}<span class="n">${h.n}</span>` +
+      (h.nl.length > 1 ? `<span class="more">+${h.nl.length - 1}</span>` : "") + `</span>`;
+    el.onclick = () => h.nl.length > 1 ? openPicker(h) : insertTerm(h.nl[0]);
+    box.appendChild(el);
+    pos = h.end;
+  }
+  words(source.slice(pos));
+  closePicker();
 }
+function openPicker(h) {
+  const p = $("picker");
+  p.innerHTML = h.nl.map((t, i) => `<div data-t="${esc(t)}"><span class="k">${String.fromCharCode(97 + i)}</span><b>${esc(t)}</b><span class="src">${esc(h.en)} · mock</span></div>`).join("");
+  for (const row of p.children) row.onclick = () => { insertTerm(row.dataset.t); closePicker(); };
+  p.className = "open";
+}
+function closePicker() { $("picker").className = ""; $("picker").innerHTML = ""; }
+function insertTerm(text) { insertAtCursor($("tgt"), text); }
+document.addEventListener("keydown", e => {
+  if (e.altKey && e.key >= "1" && e.key <= "9") {
+    const h = lensHits[+e.key - 1];
+    if (h) { e.preventDefault(); h.nl.length > 1 && e.shiftKey ? openPicker(h) : insertTerm(h.nl[0]); }
+  }
+  if (e.key === "Escape") closePicker();
+});
 
 function renderSegment(seg, live) {
   $("segid").textContent = seg ? seg.id : "";
   $("confirm").disabled = !seg;
   if (!seg) {
-    $("src").textContent = "Click into a sentence in the document.";
+    $("src").className = ""; $("src").textContent = "Click into a sentence in the document.";
+    closePicker();
     $("tgt").value = ""; $("status").textContent = "";
-    $("tmlist").innerHTML = '<div class="empty">No segment selected.</div>'; $("terms").innerHTML = "";
-    $("tmcount").textContent = ""; $("tbcount").textContent = "";
+    $("tmlist").innerHTML = '<div class="empty">No segment selected.</div>';
+    $("tmcount").textContent = "";
     return;
   }
   const hits = termHits(seg.source);
-  $("src").innerHTML = highlightTerms(seg.source, hits);
+  renderLens(seg.source, hits);
+  $("segid").textContent = (hits.length ? `${hits.length} term${hits.length > 1 ? "s" : ""} · ` : "") + seg.id;
   $("tgt").value = live ?? seg.target;
   $("status").textContent = seg.status + (seg.origin ? " · " + seg.origin : "");
   $("status").className = "status " + seg.status;
@@ -296,10 +354,6 @@ function renderSegment(seg, live) {
     : '<div class="empty">No TM match.</div>';
   for (const el of $("tmlist").querySelectorAll(".tm")) el.onclick = () => { $("tgt").value = el.dataset.t; $("tgt").focus(); };
 
-  $("tbcount").textContent = hits.length ? `${hits.length} term${hits.length > 1 ? "s" : ""}` : "";
-  $("terms").innerHTML = hits.map(([en, nl, kind]) =>
-    `<span class="term ${kind}" data-nl="${esc(nl)}">${esc(en)} → <b>${esc(nl)}</b>${kind === "nt" ? " · NT" : ""}</span>`).join("");
-  for (const el of $("terms").querySelectorAll(".term")) el.onclick = () => insertAtCursor($("tgt"), el.dataset.nl);
 }
 
 function insertAtCursor(ta, text) {
