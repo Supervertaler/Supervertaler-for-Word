@@ -43,6 +43,9 @@ def check(label, got, want):
     return ok
 
 
+UNIT = "paragraph" if "--paragraph" in sys.argv else "sentence"
+
+
 def main(out_dir: str) -> int:
     os.makedirs(out_dir, exist_ok=True)
     out_dir = os.path.abspath(out_dir)
@@ -57,22 +60,21 @@ def main(out_dir: str) -> int:
 
         # ---- anchor every sentence ----------------------------------------
         record = ProjectRecord("en", "nl")
-        ccs = []
-        for para in doc.Paragraphs:
-            for sent in list(w.sentences_in_paragraph(para)):
-                cc = w.anchor(doc, sent)
-                record.segments.append(SegmentRecord(w.segment_id(cc), cc.Range.Text))
-                ccs.append(cc)
+        ccs = w.anchor_document(doc, UNIT)
+        for cc in ccs:
+            record.segments.append(SegmentRecord(w.segment_id(cc), cc.Range.Text))
         print("anchored %d segments" % len(ccs))
 
         # ---- the Felix moment: sentence under the cursor ------------------
         doc.Range(5, 5).Select()
         got = w.sentence_at_cursor(doc).Text.strip()
-        failures += not check("sentence_at_cursor", got, record.segments[0].source)
+        failures += not check("sentence_at_cursor", record.segments[0].source.startswith(got), True)
 
         # ---- translate as tracked changes ---------------------------------
+        def stub(src):
+            return " ".join(STUB[k] for k in STUB if k in src) or src
         for cc, seg in zip(ccs, record.segments):
-            seg.target = STUB[seg.source]
+            seg.target = stub(seg.source)
             seg.origin = "ai"
             w.set_target(app, doc, cc, seg.target)
             w.annotate(doc, cc, "AI draft · no TM match")
@@ -92,16 +94,17 @@ def main(out_dir: str) -> int:
     doc = app.Documents.Open(path)
     try:
         rec = load(doc)
-        failures += not check("xml part reloaded", rec is not None and len(rec.segments), len(STUB))
+        n = len(STUB) if UNIT == "sentence" else len(PARAGRAPHS)
+        failures += not check("xml part reloaded", rec is not None and len(rec.segments), n)
         ccs = list(w.anchors(doc))
-        failures += not check("anchors survived save", len(ccs), len(STUB))
+        failures += not check("anchors survived save", len(ccs), n)
         by_id = {s.id: s for s in rec.segments}
         for cc in ccs:
             seg = by_id[w.segment_id(cc)]
             failures += not check("source of %s" % seg.id, w.source_of(cc), seg.source)
             failures += not check("target of %s" % seg.id, w.target_of(cc), seg.target)
         failures += not check("revision author", doc.Revisions(1).Author, w.REVISION_AUTHOR)
-        failures += not check("comments", doc.Comments.Count, len(STUB))
+        failures += not check("comments", doc.Comments.Count, n)
 
         # Reject All -> source document back; Accept All -> target document.
         doc.Revisions.RejectAll()
@@ -111,7 +114,7 @@ def main(out_dir: str) -> int:
         target_text = doc.Content.Text
         ok = all(t in target_text for t in STUB.values()) and not any(s in target_text for s in STUB)
         failures += not check("Accept All == target only", ok, True)
-        failures += not check("anchors survive Accept All", sum(1 for _ in w.anchors(doc)), len(STUB))
+        failures += not check("anchors survive Accept All", sum(1 for _ in w.anchors(doc)), n)
     finally:
         doc.Close(0)
         app.Quit()
@@ -121,5 +124,6 @@ def main(out_dir: str) -> int:
 
 
 if __name__ == "__main__":
-    out = sys.argv[1] if len(sys.argv) > 1 else tempfile.mkdtemp(prefix="svword_")
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    out = args[0] if args else tempfile.mkdtemp(prefix="svword_")
     sys.exit(main(out))

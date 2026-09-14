@@ -30,6 +30,19 @@ Experimental CAT tool living inside Word. Read README.md first; it is short.
   in one go. The content control survives Accept All and Reject All.
 - `CustomXMLParts.SelectByNamespace(ns)` finds the project record; it is
   replaced wholesale on save.
+- **Moves and deletes (spike/move_probe.py, 2026-09-14):** with tracking OFF a
+  cut-and-pasted sentence takes its anchor along, order and pair intact. With
+  tracking ON Word records a move as delete+insert, leaving a GHOST anchor
+  (same tag, no live text) behind and a live duplicate at the destination;
+  Accept All removes ghosts. Readers must dedupe by tag and prefer the copy
+  with live text. A deleted sentence leaves its anchor showing Word's
+  placeholder text; treat `ShowingPlaceholderText` as an empty target.
+- **Do not lock anchors** (`LockContentControl`): it does not stop contents
+  being deleted, and it makes Word refuse to cut any paragraph containing one.
+- The XML record is the authority for the source; the deletion inside the
+  anchor is a convenience that heavy editing can scatter.
+- Anchoring unit is a choice at prepare time: `anchor_document(doc, "sentence")`
+  for technical text, `"paragraph"` for marketing copy that gets rewritten.
 - Word's `Sentences` collection splits on abbreviations ("Fig.", "e.g."). Replace
   with the Workbench segmenter from `Supervertaler-Python-Core` when wiring up.
 

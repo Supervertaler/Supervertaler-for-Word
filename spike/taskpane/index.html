@@ -181,6 +181,30 @@ const esc = s => s.replace(/[&<>]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt
 
 // ------------------------------------------------------------------ document
 const NS = "urn:supervertaler:word:1", TAG = "sv:seg:";
+const PLACEHOLDERS = new Set(["[empty segment]", "Click or tap here to enter text."]);
+const liveText = t => PLACEHOLDERS.has((t || "").trim()) ? "" : t;
+let gridOrder = null;            // segment ids in document order, ghosts removed
+
+// Anchors as they sit on the page. A tracked move leaves a ghost behind (same
+// tag, no live text) next to the live copy; the live copy wins.
+async function documentOrder() {
+  return Word.run(async ctx => {
+    const ccs = ctx.document.contentControls;
+    ccs.load("items/tag,items/text");
+    await ctx.sync();
+    const seen = new Map();                       // id -> {pos, text} of the chosen copy
+    ccs.items.forEach((cc, pos) => {
+      if (!cc.tag.startsWith(TAG)) return;
+      const id = cc.tag.slice(TAG.length), text = liveText(cc.text);
+      const cur = seen.get(id);
+      if (!cur || (!cur.text && text)) seen.set(id, {pos, text});
+    });
+    return [...seen.entries()].sort((a, b) => a[1].pos - b[1].pos).map(([id]) => id);
+  });
+}
+function liveControl(ccs) {      // pick the non-ghost among same-tag controls
+  return ccs.find(c => liveText(c.text)) || ccs[0];
+}
 let record = null;               // {sourceLang, targetLang, segments:[{id,source,target,status,origin}]}
 let currentId = null;
 const $ = id => document.getElementById(id);
@@ -242,16 +266,16 @@ async function currentSegment() {
     await ctx.sync();
     if (cc.isNullObject && inside.items.length === 1) cc = inside.items[0];
     if (cc.isNullObject || !cc.tag.startsWith(TAG)) return null;
-    return {id: cc.tag.slice(TAG.length), title: cc.title, text: cc.text, selText: sel.text};
+    return {id: cc.tag.slice(TAG.length), title: cc.title, text: liveText(cc.text), selText: sel.text};
   });
 }
 
 async function selectSegment(id) {
   await Word.run(async ctx => {
     const ccs = ctx.document.contentControls.getByTag(TAG + id);
-    ccs.load("items");
+    ccs.load("items/text");
     await ctx.sync();
-    if (ccs.items.length) { ccs.items[0].select("Select"); await ctx.sync(); }
+    if (ccs.items.length) { liveControl(ccs.items).select("Select"); await ctx.sync(); }
   });
 }
 
@@ -259,10 +283,10 @@ async function writeBack(id, target, status) {
   await Word.run(async ctx => {
     ctx.document.changeTrackingMode = Word.ChangeTrackingMode.trackAll;
     const ccs = ctx.document.contentControls.getByTag(TAG + id);
-    ccs.load("items");
+    ccs.load("items/text");
     await ctx.sync();
     if (!ccs.items.length) return;
-    const cc = ccs.items[0];
+    const cc = liveControl(ccs.items);
     // Replace only the LIVE text. Replacing the whole control would also sweep
     // up the hidden deleted source and re-attribute that deletion to the user.
     const changes = cc.getRange().getTrackedChanges();
@@ -293,7 +317,9 @@ function renderCounts() {
 function renderGrid() {
   const tb = $("rows"); tb.innerHTML = "";
   if (!record) { tb.innerHTML = '<tr><td colspan="4" class="empty">No Supervertaler record in this document.</td></tr>'; return; }
-  record.segments.forEach((s, i) => {
+  const byId = new Map(record.segments.map(s => [s.id, s]));
+  const rows = gridOrder ? gridOrder.map(id => byId.get(id)).filter(Boolean) : record.segments;
+  rows.forEach((s, i) => {
     const tr = document.createElement("tr");
     tr.dataset.id = s.id;
     if (s.id === currentId) tr.className = "current";
@@ -437,7 +463,7 @@ async function readCurrentText(id) {
     const ccs = ctx.document.contentControls.getByTag(TAG + id);
     ccs.load("items/text");
     await ctx.sync();
-    return ccs.items.length ? ccs.items[0].text : null;
+    return ccs.items.length ? liveText(liveControl(ccs.items).text) : null;
   });
 }
 async function mirrorTick() {
@@ -477,6 +503,7 @@ async function onSelectionChanged() {
     if (id !== currentId) {
       stopMirror();
       await flushRecord();
+      gridOrder = await documentOrder();
       currentId = id;
       const seg = record && record.segments.find(s => s.id === id);
       renderSegment(seg || null, cur ? cur.text : undefined);
@@ -488,11 +515,12 @@ async function onSelectionChanged() {
 
 async function confirmAndNext() {
   if (!currentId || !record) return;
-  const id = currentId, idx = record.segments.findIndex(s => s.id === id);
+  const order = gridOrder || record.segments.map(s => s.id);
+  const id = currentId, idx = order.indexOf(id);
   stopMirror();
   await writeBack(id, $("tgt").value.trim(), "confirmed");
   renderCounts();
-  const next = record.segments[idx + 1];
+  const next = record.segments.find(s => s.id === order[idx + 1]);
   if (next) {
     await selectSegment(next.id);
     currentId = next.id; renderSegment(next); renderGrid();
@@ -517,6 +545,7 @@ async function draftAll() {
 Office.onReady(async info => {
   if (info.host !== Office.HostType.Word) { $("foot").textContent = "Open this pane in Word."; return; }
   await loadRecord();
+  gridOrder = await documentOrder();
   if (record) {
     $("tgt").lang = record.targetLang; $("src").lang = record.sourceLang;
     const names = new Intl.DisplayNames(["en-GB"], {type: "language"});

@@ -17,6 +17,7 @@ WD_REV_DELETE = 2            # wdRevisionDelete
 
 TAG_PREFIX = "sv:seg:"
 REVISION_AUTHOR = "Supervertaler"
+PLACEHOLDER = "[empty segment]"     # shown by Word when an anchor has no text
 
 
 # --------------------------------------------------------------------- Word app
@@ -79,14 +80,46 @@ def anchor(doc, rng, seg_id: str | None = None):
     cc = doc.ContentControls.Add(WD_CC_RICH_TEXT, rng)
     cc.Tag = TAG_PREFIX + seg_id
     cc.Title = "draft"
+    cc.SetPlaceholderText(None, None, PLACEHOLDER)
     return cc
 
 
+def anchor_document(doc, unit: str = "sentence"):
+    """Anchor every unit of the document. `unit` is "sentence" for technical
+    text, where sentences are the units of reuse, or "paragraph" for marketing
+    copy, where the writer merges, splits and reorders sentences freely and
+    the paragraph is what a TM should store. Returns the anchors in order."""
+    out = []
+    for para in doc.Paragraphs:
+        if unit == "paragraph":
+            rng = para.Range
+            if rng.Text.strip():
+                out.append(anchor(doc, rng))
+        else:
+            for sent in list(sentences_in_paragraph(para)):
+                out.append(anchor(doc, sent))
+    return out
+
+
+def is_ghost(cc) -> bool:
+    """A moved anchor under tracking leaves a duplicate behind: same tag, all
+    of its text a tracked deletion. Such a ghost has no live text."""
+    return not cc.Range.Text.strip() or cc.ShowingPlaceholderText
+
+
 def anchors(doc):
-    """All Supervertaler content controls in document order."""
+    """Supervertaler anchors in document order, one per segment id. When a
+    tracked move has left a ghost and a live copy with the same tag, the live
+    copy wins; an anchor that is empty everywhere is still reported once."""
+    seen = {}
     for cc in doc.ContentControls:
-        if str(cc.Tag).startswith(TAG_PREFIX):
-            yield cc
+        tag = str(cc.Tag)
+        if not tag.startswith(TAG_PREFIX):
+            continue
+        if tag not in seen or (is_ghost(seen[tag]) and not is_ghost(cc)):
+            seen[tag] = cc
+    for cc in sorted(seen.values(), key=lambda c: c.Range.Start):   # where the live copy sits
+        yield cc
 
 
 def segment_id(cc) -> str:
@@ -126,14 +159,25 @@ def source_of(cc) -> str:
     XML project record is the authority; this reads it from the document
     alone. An untranslated anchor returns its live text."""
     deleted = _supervertaler_deletions(cc)
-    return "".join(deleted) if deleted else cc.Range.Text
+    if deleted:
+        return "".join(deleted)
+    return "" if cc.ShowingPlaceholderText else cc.Range.Text
 
 
-def target_of(cc) -> str:
+def target_of(cc, source: str | None = None) -> str:
     """Target text = the anchor's live text. Range.Text already excludes every
     deleted revision, whoever made it, and includes text typed with tracking
-    off. An untranslated anchor has no target yet."""
-    return cc.Range.Text if _supervertaler_deletions(cc) else ""
+    off. Without a source deletion inside (an untranslated anchor, or one that
+    a tracked move rebuilt), the record's `source` decides: live text equal to
+    it means untranslated."""
+    if cc.ShowingPlaceholderText:
+        return ""
+    text = cc.Range.Text
+    if _supervertaler_deletions(cc):
+        return text
+    if source is not None:
+        return "" if text == source else text
+    return ""
 
 
 # --------------------------------------------------------------------- comments
