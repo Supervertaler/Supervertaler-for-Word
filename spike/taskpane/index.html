@@ -3,7 +3,12 @@
 <head>
 <meta charset="utf-8">
 <title>Supervertaler for Word</title>
-<script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
+<script>
+  // ?standalone opens the pane in a plain browser with a stand-in Word (standalone.js)
+  document.write(location.search.includes("standalone")
+    ? '<script src="standalone.js"><\/script>'
+    : '<script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"><\/script>');
+</script>
 <style>
   :root {
     --blue: #1f5fbf; --blue-soft: #e8f0fb; --ink: #1c1c1c; --muted: #6b6b6b;
@@ -80,7 +85,8 @@
   td { padding: 5px 6px; border-bottom: 1px solid var(--line); vertical-align: top; line-height: 1.35; }
   tr { cursor: pointer; }
   tr:hover td { background: var(--blue-soft); }
-  tr.current td { background: var(--blue-soft); box-shadow: inset 3px 0 0 var(--blue); }
+  tr.current td { background: var(--blue-soft); }
+  tr.current td:first-child { box-shadow: inset 3px 0 0 var(--blue); }
   td.n { color: var(--muted); width: 28px; text-align: right; }
   td.st { width: 18px; text-align: center; }
   td.st.confirmed { color: var(--ok); }
@@ -503,6 +509,10 @@ async function onSelectionChanged() {
     const cur = await currentSegment();
     const id = cur ? cur.id : null;
     if (cur && id === currentId && cur.selText && cur.selText.trim() && cur.selText !== cur.text) setTargetSel(cur.selText);
+    // Sticky segment: a click on a picture, a blank line or a gap between
+    // segments keeps the current segment in the pane; only entering another
+    // segment switches.
+    if (id === null && currentId !== null) return;
     if (id !== currentId) {
       stopMirror();
       await flushRecord();
