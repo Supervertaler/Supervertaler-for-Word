@@ -31,6 +31,16 @@
   .lens .hit .n { display: inline-block; min-width: 14px; height: 14px; line-height: 14px; text-align: center; font-size: 9.5px; font-weight: 700; color: #fff; background: var(--blue); border-radius: 7px; margin-left: 4px; vertical-align: 1px; }
   .lens .hit.nt .n { background: var(--warn); }
   .lens .hit .more { font-weight: 400; color: var(--muted); margin-left: 3px; }
+  .lens .u.sel, .lens .hit.sel .ws { background: #ffd54f; border-radius: 2px; }
+  .lens .u { cursor: text; }
+  #pair { display: none; margin-top: 6px; border: 1px solid var(--blue); border-radius: 4px; background: var(--blue-soft); padding: 6px 8px; align-items: center; gap: 6px; font-size: 12px; }
+  #pair.open { display: flex; flex-wrap: wrap; }
+  #pair input { font: inherit; padding: 3px 6px; border: 1px solid var(--line); border-radius: 3px; min-width: 120px; flex: 1; background: #fff; }
+  #pair .arrow { color: var(--muted); }
+  #pair button { padding: 3px 10px; }
+  #pair .hint2 { color: var(--muted); font-size: 11px; width: 100%; }
+  #toast { position: fixed; left: 50%; bottom: 40px; transform: translateX(-50%); background: var(--ink); color: #fff; padding: 6px 12px; border-radius: 4px; font-size: 12px; opacity: 0; transition: opacity .2s; pointer-events: none; }
+  #toast.show { opacity: .92; }
   #picker { display: none; margin: 4px 0 0; border: 1px solid var(--line); border-radius: 4px; background: #fff; overflow: hidden; }
   #picker.open { display: block; }
   #picker div { display: flex; gap: 8px; padding: 4px 8px; cursor: pointer; border-top: 1px solid var(--line); }
@@ -87,6 +97,11 @@
     <h2>Segment <span class="pill" id="segid"></span></h2>
     <div id="src">Click into a sentence in the document.</div>
     <div id="picker"></div>
+    <div id="pair">
+      <input id="pair-src" placeholder="source term"><span class="arrow">&rarr;</span><input id="pair-tgt" placeholder="target term">
+      <button id="pair-add">Add term</button><button id="pair-clear" class="ghost">Clear</button>
+      <span class="hint2">Click words in the source to select them &middot; select the target here or on the page &middot; Ctrl+Shift+T adds</span>
+    </div>
     <textarea id="tgt" placeholder="Target" spellcheck="true"></textarea>
     <div class="row">
       <button id="confirm" disabled>Confirm &amp; next</button>
@@ -106,6 +121,7 @@
     </table>
   </section>
 </main>
+<div id="toast"></div>
 <footer id="foot">Loading Office.js…</footer>
 
 <script>
@@ -218,6 +234,7 @@ async function saveRecord(ctx) {
 async function currentSegment() {
   return Word.run(async ctx => {
     const sel = ctx.document.getSelection();
+    sel.load("text");
     let cc = sel.parentContentControlOrNullObject;
     cc.load("isNullObject,tag,title,text");
     const inside = sel.contentControls;               // controls wholly within the selection
@@ -225,7 +242,7 @@ async function currentSegment() {
     await ctx.sync();
     if (cc.isNullObject && inside.items.length === 1) cc = inside.items[0];
     if (cc.isNullObject || !cc.tag.startsWith(TAG)) return null;
-    return {id: cc.tag.slice(TAG.length), title: cc.title, text: cc.text};
+    return {id: cc.tag.slice(TAG.length), title: cc.title, text: cc.text, selText: sel.text};
   });
 }
 
@@ -294,7 +311,9 @@ function renderLens(source, hits) {
   lensHits = hits;
   const box = $("src"); box.className = "lens"; box.innerHTML = "";
   let pos = 0;
-  const words = (text) => { for (const w of text.split(/(\s+)/)) if (w.trim()) { const el = document.createElement("span"); el.className = "w"; el.textContent = w; box.appendChild(el); } };
+  let unit = 0;
+  const mkUnit = (el, text) => { el.dataset.u = unit++; el.dataset.t = text; el.classList.add("u"); el.addEventListener("click", ev => { ev.stopPropagation(); lensClick(+el.dataset.u); }); };
+  const words = (text) => { for (const w of text.split(/(\s+)/)) if (w.trim()) { const el = document.createElement("span"); el.className = "w"; el.textContent = w; mkUnit(el, w); box.appendChild(el); } };
   for (const h of hits) {
     words(source.slice(pos, h.start));
     const el = document.createElement("span");
@@ -302,13 +321,60 @@ function renderLens(source, hits) {
     el.innerHTML = `<span class="ws">${esc(source.slice(h.start, h.end))}</span>` +
       `<span class="tt">${esc(h.nl[0])}${h.kind === "nt" ? " · NT" : ""}<span class="n">${h.n}</span>` +
       (h.nl.length > 1 ? `<span class="more">+${h.nl.length - 1}</span>` : "") + `</span>`;
-    el.onclick = () => h.nl.length > 1 ? openPicker(h) : insertTerm(h.nl[0]);
+    const ws = el.querySelector(".ws"); mkUnit(ws, source.slice(h.start, h.end));
+    el.querySelector(".tt").onclick = ev => { ev.stopPropagation(); h.nl.length > 1 ? openPicker(h) : insertTerm(h.nl[0]); };
     box.appendChild(el);
     pos = h.end;
   }
   words(source.slice(pos));
   closePicker();
+  lensSel = null; renderLensSel();
 }
+
+// ---- term pair: a remembered source selection + a remembered target selection
+let lensSel = null, tgtSel = "";
+function lensUnits() { return [...$("src").querySelectorAll(".u")]; }
+function lensClick(i) {
+  if (lensSel && i >= lensSel.a && i <= lensSel.b) lensSel = null;
+  else if (lensSel) lensSel = {a: Math.min(lensSel.a, i), b: Math.max(lensSel.b, i)};
+  else lensSel = {a: i, b: i};
+  renderLensSel();
+}
+function lensSelText() {
+  if (!lensSel) return "";
+  return lensUnits().filter(u => +u.dataset.u >= lensSel.a && +u.dataset.u <= lensSel.b).map(u => u.dataset.t).join(" ").replace(/[.,;:!?]+$/, "");
+}
+function renderLensSel() {
+  for (const u of lensUnits()) {
+    const on = !!(lensSel && +u.dataset.u >= lensSel.a && +u.dataset.u <= lensSel.b);
+    u.classList.toggle("sel", on);
+    if (u.classList.contains("ws")) u.parentElement.classList.toggle("sel", on);
+  }
+  renderPair();
+}
+function setTargetSel(text) { tgtSel = (text || "").trim().replace(/[.,;:!?]+$/, ""); renderPair(); }
+function renderPair() {
+  const src = lensSelText(), p = $("pair");
+  if (!src && !tgtSel) { p.className = ""; return; }
+  if (document.activeElement !== $("pair-src")) $("pair-src").value = src;
+  if (document.activeElement !== $("pair-tgt")) $("pair-tgt").value = tgtSel;
+  p.className = "open";
+}
+function clearPair() { lensSel = null; tgtSel = ""; renderLensSel(); $("pair").className = ""; }
+function addTermPair() {
+  const src = $("pair-src").value.trim(), tgt = $("pair-tgt").value.trim();
+  if (!src || !tgt) { toast("Select a source term and a target term first"); return; }
+  // Mock termbase; the real pane posts to the local engine.
+  const existing = MOCK_TB.find(([en]) => en.toLowerCase() === src.toLowerCase());
+  if (existing) { if (!existing[1].includes(tgt)) existing[1].push(tgt); } else MOCK_TB.push([src, [tgt], ""]);
+  toast("Added: " + src + " \u2192 " + tgt);
+  clearPair();
+  const seg = record && record.segments.find(x => x.id === currentId);
+  if (seg) { const keep = $("tgt").value; renderSegment(seg, keep); }
+}
+let toastTimer = null;
+function toast(msg) { const t = $("toast"); t.textContent = msg; t.className = "show"; clearTimeout(toastTimer); toastTimer = setTimeout(() => t.className = "", 1800); }
+
 let pickerFor = null;
 function openPicker(h) {
   if (pickerFor === h) { closePicker(); return; }      // second click folds it away
@@ -325,7 +391,7 @@ document.addEventListener("keydown", e => {
     const h = lensHits[+e.key - 1];
     if (h) { e.preventDefault(); h.nl.length > 1 && e.shiftKey ? openPicker(h) : insertTerm(h.nl[0]); }
   }
-  if (e.key === "Escape") closePicker();
+  if (e.key === "Escape") { closePicker(); clearPair(); }
 });
 
 function renderSegment(seg, live) {
@@ -407,6 +473,7 @@ async function onSelectionChanged() {
   try {
     const cur = await currentSegment();
     const id = cur ? cur.id : null;
+    if (cur && id === currentId && cur.selText && cur.selText.trim() && cur.selText !== cur.text) setTargetSel(cur.selText);
     if (id !== currentId) {
       stopMirror();
       await flushRecord();
@@ -463,6 +530,12 @@ Office.onReady(async info => {
   $("confirm").onclick = confirmAndNext;
   $("draftall").onclick = draftAll;
   $("tgt").addEventListener("keydown", e => { if (e.ctrlKey && e.key === "Enter") { e.preventDefault(); confirmAndNext(); } });
+  const grab = () => { const t = $("tgt"); if (t.selectionEnd > t.selectionStart) setTargetSel(t.value.slice(t.selectionStart, t.selectionEnd)); };
+  $("tgt").addEventListener("mouseup", grab);
+  $("tgt").addEventListener("keyup", e => { if (e.shiftKey || e.key.startsWith("Arrow")) grab(); });
+  $("pair-add").onclick = addTermPair; $("pair-clear").onclick = clearPair;
+  for (const id of ["pair-src", "pair-tgt"]) $(id).addEventListener("keydown", e => { if (e.key === "Enter") addTermPair(); });
+  document.addEventListener("keydown", e => { if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "t") { e.preventDefault(); addTermPair(); } });
   $("foot").textContent = record ? `${record.sourceLang} → ${record.targetLang} · matches are a mock; the real pane asks the local engine.`
                                  : "This document has no Supervertaler record yet.";
   onSelectionChanged();
