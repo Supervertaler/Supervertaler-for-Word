@@ -29,6 +29,18 @@ works in No Markup, so the page is clean target text, and the pane follows the
 cursor. The pane holds no state of its own: close Word, reopen the file
 tomorrow, and everything resumes.
 
+## The preview is the document
+
+Every CAT tool has a preview pane, and every one of them is an approximation:
+a rendering generated from an export, refreshed when the tool gets round to it,
+never quite the file the client will open. Here there is no preview. The page
+in Word *is* the document, live, and the grid in the pane is a second view of
+the same anchors. Click a row and Word jumps to that sentence. Confirm a
+segment and the page changes in front of you. Move a paragraph in Word and the
+grid still knows which segment is which, because the anchors moved with the
+text. What you are looking at while you translate is the deliverable, in its
+final format, at every moment.
+
 One file, three consumers: Otto can emit it, the pane edits it in place, and
 Supervertaler Workbench can open it as a project.
 
