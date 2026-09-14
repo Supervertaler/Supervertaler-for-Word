@@ -183,6 +183,7 @@ const esc = s => s.replace(/[&<>]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt
 const NS = "urn:supervertaler:word:1", TAG = "sv:seg:";
 const PLACEHOLDERS = new Set(["[empty segment]", "Click or tap here to enter text."]);
 const liveText = t => PLACEHOLDERS.has((t || "").trim()) ? "" : t;
+const targetOf = (seg, live) => (seg && live === seg.source) ? "" : live;
 let gridOrder = null;            // segment ids in document order, ghosts removed
 
 // Anchors as they sit on the page. A tracked move leaves a ghost behind (same
@@ -323,7 +324,8 @@ function renderGrid() {
     const tr = document.createElement("tr");
     tr.dataset.id = s.id;
     if (s.id === currentId) tr.className = "current";
-    tr.innerHTML = `<td class="n">${i + 1}</td><td class="st ${s.status}">${s.status === "confirmed" ? "✓" : "✎"}</td>` +
+    const glyph = s.status === "confirmed" ? "✓" : (s.target ? "✎" : "○");
+    tr.innerHTML = `<td class="n">${i + 1}</td><td class="st ${s.status}">${glyph}</td>` +
                    `<td>${esc(s.source)}</td><td>${esc(s.target)}</td>`;
     tr.onclick = () => selectSegment(s.id);
     tb.appendChild(tr);
@@ -474,12 +476,13 @@ async function mirrorTick() {
     if (text !== null && text !== lastWordText) {
       lastWordText = text;
       const seg = record && record.segments.find(s => s.id === currentId);
-      if (seg && seg.target !== text) {
-        seg.target = text; seg.dirty = true;
+      const tgt = targetOf(seg, text);
+      if (seg && seg.target !== tgt) {
+        seg.target = tgt; seg.dirty = true;
         const cell = $("rows").querySelector(`tr[data-id="${currentId}"] td:last-child`);
-        if (cell) cell.textContent = text;
+        if (cell) cell.textContent = tgt;
       }
-      if (document.activeElement !== $("tgt")) $("tgt").value = text;
+      if (document.activeElement !== $("tgt")) $("tgt").value = tgt;
     }
   } catch (e) { /* segment vanished mid-tick; the next selection change sorts it out */ }
   finally { mirrorBusy = false; }
@@ -506,7 +509,7 @@ async function onSelectionChanged() {
       gridOrder = await documentOrder();
       currentId = id;
       const seg = record && record.segments.find(s => s.id === id);
-      renderSegment(seg || null, cur ? cur.text : undefined);
+      renderSegment(seg || null, cur ? targetOf(seg, cur.text) : undefined);
       renderGrid();
       if (id) { lastWordText = cur.text; startMirror(); }
     }

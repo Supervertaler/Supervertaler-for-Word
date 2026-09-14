@@ -90,14 +90,16 @@ def anchor_document(doc, unit: str = "sentence"):
     copy, where the writer merges, splits and reorders sentences freely and
     the paragraph is what a TM should store. Returns the anchors in order."""
     out = []
+    has_words = lambda rng: any(ch.isalpha() for ch in rng.Text)   # skips image-only paragraphs
     for para in doc.Paragraphs:
         if unit == "paragraph":
             rng = para.Range
-            if rng.Text.strip():
+            if has_words(rng):
                 out.append(anchor(doc, rng))
         else:
             for sent in list(sentences_in_paragraph(para)):
-                out.append(anchor(doc, sent))
+                if has_words(sent):
+                    out.append(anchor(doc, sent))
     return out
 
 
