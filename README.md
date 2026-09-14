@@ -2,7 +2,13 @@
 
 **A CAT tool that lives inside Microsoft Word. The document is the project.**
 
-Experimental. Started 14 September 2026. Nothing here is a product yet.
+![Supervertaler for Word task pane beside a document in Word](docs/screenshots/taskpane.png)
+
+*Word shows the clean target text. The pane shows the sentence under the cursor
+with its source, TM matches with differences marked, termbase hits, and a grid
+that scrolls with the document. Test data, not a real job.*
+
+Experimental. Started 14 September 2026. Not a product yet.
 
 ## The idea
 
@@ -18,56 +24,73 @@ that forgot everything when it closed. Word has had four durable structures sinc
 | **Custom XML part** | The project record (alignment map, statuses, origin, match %) rides inside the .docx. No sidecar files. |
 | **Comments** | Match info and, later, the agent's questions to the translator. |
 
-The editing surface is a hover tool in the Felix style: click a sentence in Word,
-a floating window is the CAT tool. The hover tool holds no document state, so
-closing it and reopening Word tomorrow resumes exactly where you were.
+The editing surface is a Word task pane, docked by Word itself. The translator
+works in No Markup, so the page is clean target text, and the pane follows the
+cursor. The pane holds no state of its own: close Word, reopen the file
+tomorrow, and everything resumes.
 
-One file, three consumers: Otto can emit it, the hover tool edits it in place,
-and Supervertaler Workbench can open it as a project.
+One file, three consumers: Otto can emit it, the pane edits it in place, and
+Supervertaler Workbench can open it as a project.
 
-## Status
+## What works today
 
-`spike/roundtrip_demo.py` proves the storage model end to end against a real
-Word instance over COM: anchor every sentence, translate as tracked changes,
-save, reopen, and verify that source and target are both recoverable from the
-document alone, that Reject All yields the original and Accept All the target,
-and that anchors and the XML part survive both. All checks pass on Word 16.
+- **Storage model**, proven over COM by `spike/roundtrip_demo.py`: anchor every
+  sentence, translate as tracked changes, save, reopen, and verify that source
+  and target are recoverable from the document alone, that Reject All yields
+  the original and Accept All the target, and that anchors and the XML record
+  survive both. The source cannot be lost by editing the target with tracking
+  on or off (`spike/tracking_off_probe.py`).
+- **Cursor following**, proven by `spike/follow_cursor.py`: Word's selection
+  events reach Python, leaving an anchor refreshes the record, writing back
+  moves the cursor on.
+- **The task pane**, `spike/taskpane/`: an Office.js add-in served from
+  localhost that reads the anchors and record, follows the cursor, writes
+  targets back as tracked changes without disturbing the source deletion, and
+  shows fuzzy TM matches, termbase hits and a grid. Loads in desktop Word 365
+  over plain `http://localhost`, no certificate needed.
 
+TM and termbase matches in the pane are a mock inside the page. The engine
+will run locally so client data never leaves the machine.
+
+## Try the pane
+
+```powershell
+cd "spike\taskpane"
+powershell -NoProfile -File register.ps1      # once; -Remove to undo
+python -m http.server 3000                    # leave running
 ```
-python spike/roundtrip_demo.py spike\out
-```
 
-`spike/follow_cursor.py` proves Word's selection events reach Python and that
-edits made in either place end up in the file. `spike/taskpane/` is the same
-document model as a real Word task pane: an Office.js add-in served from
-localhost that follows the cursor, writes targets back as tracked changes and
-shows fuzzy TM matches, termbase hits and a grid. It loads in desktop Word 365
-over plain http://localhost with no certificate. Register it with
-`spike/taskpane/register.ps1`, serve it with `python -m http.server 3000` from
-that folder, then Home > Add-ins > More Add-ins > Developer Add-ins.
+Open a document prepared by `spike/roundtrip_demo.py`, then in Word:
+Home > Add-ins > More Add-ins > Developer Add-ins > Supervertaler for Word.
+After the first time there is a Supervertaler button on the Home tab.
+Set Review > No Markup.
 
-Decided: Supervertaler for Word is its own product beside Word, the task pane
-is the editing surface, and the engine stays local so client data never leaves
-the machine. TM and termbase matches in the spike are a mock inside the page.
+## Roadmap
 
-Not yet built: the local engine bridge, TM and termbase lookup, a real translator
-behind the stub, the Workbench segmenter in place of Word's sentence detection,
-and any handling of documents that arrive with their own tracked changes.
+1. **Prepare document** in the pane: segment and anchor a fresh Word file.
+2. **Local engine** on localhost in front of the Workbench TM, termbase and LLM code.
+3. **Formatting-safe write-back**: bold, italics, links and fields inside a sentence survive confirm.
+4. **The Workbench segmenter** instead of Word's sentence detection.
+5. **Packaging**: the engine serves the pane, an installer registers the add-in.
+
+Then: agent questions as comments, a rulebook learned from what the translator
+changes, and Draft All backed by the Otto pipeline running locally.
 
 ## Layout
 
 ```
-svword/word_com.py     thin COM layer: anchors, tracked-change targets, sentence at cursor
+svword/word_com.py     COM layer: anchors, tracked-change targets, sentence at cursor
 svword/project_xml.py  the custom XML project record
 spike/                 proofs of concept, each self-verifying
+spike/taskpane/        the Office.js task pane, manifest and registration script
 ```
 
-Windows only for now (COM). An Office.js add-in would extend this to Mac and
-Word for the web; the storage model is the same.
+Windows only for now. The task pane itself is cross-platform; the COM spikes and
+the local engine are not yet.
 
 ## Requirements
 
-Python 3.10+, `pywin32`, Microsoft Word.
+Python 3.10+, `pywin32`, Microsoft Word 365.
 
 ## Licence
 
