@@ -46,6 +46,22 @@
   #pair .hint2 { color: var(--muted); font-size: 11px; width: 100%; }
   #toast { position: fixed; left: 50%; bottom: 40px; transform: translateX(-50%); background: var(--ink); color: #fff; padding: 6px 12px; border-radius: 4px; font-size: 12px; opacity: 0; transition: opacity .2s; pointer-events: none; }
   #toast.show { opacity: .92; }
+  #src.plain { display: block; line-height: 1.6; }
+  #src.plain .u { display: inline; }
+  #src.plain .hit { display: inline; padding: 0; margin: 0; }
+  #src.plain .hit .ws { border-bottom: 0; background: var(--hit); padding: 0 2px; border-radius: 2px; }
+  #src.plain .hit .n { display: inline-block; min-width: 13px; height: 13px; line-height: 13px; text-align: center; font-size: 9px; font-weight: 700; color: #fff; background: var(--blue); border-radius: 7px; margin-left: 2px; vertical-align: 2px; cursor: pointer; }
+  #src.plain .hit.nt .n { background: var(--warn); }
+  #src.plain .hit.sel .ws { background: #ffd54f; }
+  .terms { display: flex; flex-wrap: wrap; gap: 6px; padding: 6px 10px 10px; }
+  .term { border: 1px solid var(--line); border-radius: 12px; padding: 2px 8px; background: #fff; cursor: pointer; font-size: 12px; }
+  .term:hover { border-color: var(--blue); }
+  .term b { color: var(--blue); font-weight: 600; }
+  .term.nt b { color: var(--warn); }
+  .term .k { display: inline-block; min-width: 14px; height: 14px; line-height: 14px; text-align: center; font-size: 9.5px; font-weight: 700; color: #fff; background: var(--blue); border-radius: 7px; margin-right: 4px; }
+  .term.nt .k { background: var(--warn); }
+  .term .more { color: var(--muted); margin-left: 3px; }
+  #termmode { font: inherit; font-size: 11px; color: var(--muted); border: 0; background: transparent; cursor: pointer; margin-right: 8px; }
   #picker { display: none; margin: 4px 0 0; border: 1px solid var(--line); border-radius: 4px; background: #fff; overflow: hidden; }
   #picker.open { display: block; }
   #picker div { display: flex; gap: 8px; padding: 4px 8px; cursor: pointer; border-top: 1px solid var(--line); }
@@ -100,7 +116,7 @@
 </header>
 <main>
   <section id="segment">
-    <h2>Segment <span class="pill" id="segid"></span></h2>
+    <h2>Segment <span class="pill"><select id="termmode" title="How termbase hits are shown"><option value="lens">Terms: lens</option><option value="chips">Terms: chips</option></select><span id="segid"></span></span></h2>
     <div id="src">Click into a sentence in the document.</div>
     <div id="picker"></div>
     <div id="pair">
@@ -119,6 +135,8 @@
   <section id="matches">
     <h2>Translation memory <span class="pill" id="tmcount"></span></h2>
     <div id="tmlist"><div class="empty">No segment selected.</div></div>
+    <h2 id="tbhead" hidden>Termbase <span class="pill" id="tbcount"></span></h2>
+    <div class="terms" id="terms" hidden></div>
   </section>
   <section id="grid">
     <table>
@@ -341,9 +359,11 @@ function renderGrid() {
 }
 
 let lensHits = [];
+function termMode() { try { return localStorage.getItem("sv.termmode") || "lens"; } catch (e) { return "lens"; } }
 function renderLens(source, hits) {
   lensHits = hits;
-  const box = $("src"); box.className = "lens"; box.innerHTML = "";
+  const mode = termMode();
+  const box = $("src"); box.className = mode === "lens" ? "lens" : "lens plain"; box.innerHTML = "";
   let pos = 0;
   let unit = 0;
   const mkUnit = (el, text) => { el.dataset.u = unit++; el.dataset.t = text; el.classList.add("u"); el.addEventListener("click", ev => { ev.stopPropagation(); lensClick(+el.dataset.u); }); };
@@ -352,17 +372,33 @@ function renderLens(source, hits) {
     words(source.slice(pos, h.start));
     const el = document.createElement("span");
     el.className = "hit" + (h.kind === "nt" ? " nt" : "");
-    el.innerHTML = `<span class="ws">${esc(source.slice(h.start, h.end))}</span>` +
-      `<span class="tt">${esc(h.nl[0])}${h.kind === "nt" ? " · NT" : ""}<span class="n">${h.n}</span>` +
-      (h.nl.length > 1 ? `<span class="more">+${h.nl.length - 1}</span>` : "") + `</span>`;
+    if (mode === "lens") {
+      el.innerHTML = `<span class="ws">${esc(source.slice(h.start, h.end))}</span>` +
+        `<span class="tt">${esc(h.nl[0])}${h.kind === "nt" ? " · NT" : ""}<span class="n">${h.n}</span>` +
+        (h.nl.length > 1 ? `<span class="more">+${h.nl.length - 1}</span>` : "") + `</span>`;
+      el.querySelector(".tt").onclick = ev => { ev.stopPropagation(); h.nl.length > 1 ? openPicker(h) : insertTerm(h.nl[0]); };
+    } else {
+      el.innerHTML = `<span class="ws">${esc(source.slice(h.start, h.end))}</span><span class="n" title="${esc(h.nl[0])}">${h.n}</span>`;
+      el.querySelector(".n").onclick = ev => { ev.stopPropagation(); h.nl.length > 1 ? openPicker(h) : insertTerm(h.nl[0]); };
+    }
     const ws = el.querySelector(".ws"); mkUnit(ws, source.slice(h.start, h.end));
-    el.querySelector(".tt").onclick = ev => { ev.stopPropagation(); h.nl.length > 1 ? openPicker(h) : insertTerm(h.nl[0]); };
     box.appendChild(el);
     pos = h.end;
   }
   words(source.slice(pos));
   closePicker();
   lensSel = null; renderLensSel();
+  renderChips(hits, mode);
+}
+function renderChips(hits, mode) {
+  const show = mode === "chips" && hits.length > 0;
+  $("tbhead").hidden = !show; $("terms").hidden = !show;
+  if (!show) return;
+  $("tbcount").textContent = `${hits.length} term${hits.length > 1 ? "s" : ""}`;
+  $("terms").innerHTML = hits.map(h =>
+    `<span class="term ${h.kind}"><span class="k">${h.n}</span>${esc(h.en)} → <b>${esc(h.nl[0])}</b>${h.kind === "nt" ? " · NT" : ""}` +
+    (h.nl.length > 1 ? `<span class="more">+${h.nl.length - 1}</span>` : "") + `</span>`).join("");
+  [...$("terms").children].forEach((el, i) => { const h = hits[i]; el.onclick = () => h.nl.length > 1 ? openPicker(h) : insertTerm(h.nl[0]); });
 }
 
 // ---- term pair: a remembered source selection + a remembered target selection
@@ -433,6 +469,7 @@ function renderSegment(seg, live) {
   $("confirm").disabled = !seg;
   if (!seg) {
     $("src").className = ""; $("src").textContent = "Click into a sentence in the document.";
+    $("tbhead").hidden = true; $("terms").hidden = true;
     closePicker();
     $("tgt").value = ""; $("status").textContent = "";
     $("tmlist").innerHTML = '<div class="empty">No segment selected.</div>';
@@ -569,6 +606,12 @@ Office.onReady(async info => {
   }
   renderCounts(); renderGrid();
   Office.context.document.addHandlerAsync(Office.EventType.DocumentSelectionChanged, onSelectionChanged);
+  $("termmode").value = termMode();
+  $("termmode").onchange = () => {
+    try { localStorage.setItem("sv.termmode", $("termmode").value); } catch (e) {}
+    const seg = record && record.segments.find(x => x.id === currentId);
+    if (seg) renderSegment(seg, $("tgt").value);
+  };
   $("confirm").onclick = confirmAndNext;
   $("draftall").onclick = draftAll;
   $("tgt").addEventListener("keydown", e => { if (e.ctrlKey && e.key === "Enter") { e.preventDefault(); confirmAndNext(); } });
