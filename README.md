@@ -37,7 +37,20 @@ and that anchors and the XML part survive both. All checks pass on Word 16.
 python spike/roundtrip_demo.py spike\out
 ```
 
-Not yet built: the hover window, TM and termbase lookup, a real translator
+`spike/follow_cursor.py` proves Word's selection events reach Python and that
+edits made in either place end up in the file. `spike/taskpane/` is the same
+document model as a real Word task pane: an Office.js add-in served from
+localhost that follows the cursor, writes targets back as tracked changes and
+shows fuzzy TM matches, termbase hits and a grid. It loads in desktop Word 365
+over plain http://localhost with no certificate. Register it with
+`spike/taskpane/register.ps1`, serve it with `python -m http.server 3000` from
+that folder, then Home > Add-ins > More Add-ins > Developer Add-ins.
+
+Decided: Supervertaler for Word is its own product beside Word, the task pane
+is the editing surface, and the engine stays local so client data never leaves
+the machine. TM and termbase matches in the spike are a mock inside the page.
+
+Not yet built: the local engine bridge, TM and termbase lookup, a real translator
 behind the stub, the Workbench segmenter in place of Word's sentence detection,
 and any handling of documents that arrive with their own tracked changes.
 
