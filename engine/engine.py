@@ -5,8 +5,9 @@ from a Supervertaler database, read-only.
 
 Endpoints (all JSON):
     GET  /api/status                      what is loaded
-    GET  /api/terms?text=&src=nl&tgt=en   termbase hits for a sentence
-    GET  /api/tm?text=&src=nl&tgt=en      TM candidates for a sentence (the pane scores them)
+    GET  /api/terms?text=&src=nl&tgt=en[&tbs=13,103]   termbase hits for a sentence
+    GET  /api/tm?text=&src=nl&tgt=en[&tms=BEIJER,x]     TM candidates (the pane scores them)
+    tbs / tms restrict the lookup to the resources the document has switched on.
     POST /api/terms  {src, tgt, src_lang, tgt_lang, termbase_id}
                                           add a term to a termbase in the database
 
@@ -69,6 +70,7 @@ class Engine:
         tables = {r[0] for r in self.con.execute("select name from sqlite_master where type='table'")}
         self.has_tm = {"translation_units", "translation_units_fts"} <= tables
         self.tm_units = self.con.execute("select count(*) from translation_units").fetchone()[0] if self.has_tm else 0
+        self.tms = self._load_tms() if self.has_tm else []
 
     # ---- loading
     def _load_termbases(self, ids):
@@ -80,23 +82,23 @@ class Engine:
                 % ",".join("?" * len(ids)), ids).fetchall()
         return [{"id": r[0], "name": r[1], "src": (r[2] or "").lower(), "tgt": (r[3] or "").lower(), "count": 0} for r in rows]
 
-    def _add_term(self, src, tgt, kind, pair):
+    def _add_term(self, src, tgt, kind, pair, tb_id=None):
         key = norm(src)
         if not key or trivial(key):
             return
         e = self.terms.setdefault(key, {"src": src, "tgts": [], "kind": kind, "pair": pair})
-        if tgt and tgt not in e["tgts"]:
-            e["tgts"].append(tgt)
+        if tgt and not any(t["t"] == tgt and t["tb"] == tb_id for t in e["tgts"]):
+            e["tgts"].append({"t": tgt, "tb": tb_id})
         if kind == "nt":
             e["kind"] = "nt"
         self.max_words = max(self.max_words, key.count(" ") + 1)
 
-    def _add_pair(self, src, tgt, kind, pair):
+    def _add_pair(self, src, tgt, kind, pair, tb_id=None):
         """A termbase entry serves both directions: BEIJER is stored
         English-first and is used on Dutch-to-English jobs, as Studio does."""
-        self._add_term(src, tgt, kind, pair)
+        self._add_term(src, tgt, kind, pair, tb_id)
         if tgt:
-            self._add_term(tgt, src, kind, (pair[1], pair[0]))
+            self._add_term(tgt, src, kind, (pair[1], pair[0]), tb_id)
 
     def _load_terms(self, tb):
         rows = self.con.execute(
@@ -107,11 +109,17 @@ class Engine:
                 continue
             # the term's own languages win; a termbase's header can be wrong or mixed
             pair = ((sl or tb["src"]).lower()[:2], (tl or tb["tgt"]).lower()[:2])
-            self._add_pair(src, tgt or "", "nt" if nt else "", pair)
+            self._add_pair(src, tgt or "", "nt" if nt else "", pair, str(tb["id"]))
             for s in (syn or "").split(";"):
                 if s.strip():
                     self._add_term(src, s.strip(), "", pair)
         tb["count"] = len(rows)
+
+    def _load_tms(self):
+        counts = dict(self.con.execute("select tm_id, count(*) from translation_units group by tm_id").fetchall())
+        rows = self.con.execute("select id, name, tm_id, source_lang, target_lang from translation_memories order by name").fetchall()
+        return [{"id": r[0], "name": r[1], "tm_id": r[2], "src": (r[3] or "").lower()[:2], "tgt": (r[4] or "").lower()[:2],
+                 "count": counts.get(r[2], 0)} for r in rows]
 
     def _load_pending(self):
         if os.path.exists(PENDING):
@@ -120,32 +128,43 @@ class Engine:
 
     # ---- queries
     def status(self):
-        return {"ok": True, "db": os.path.basename(self.db_path), "termbases": self.termbases,
+        return {"ok": True, "db": os.path.basename(self.db_path), "termbases": self.termbases, "tms": self.tms,
                 "project_termbase": self.project_termbase, "terms": len(self.terms), "tm_units": self.tm_units}
 
-    def term_hits(self, text: str, src: str, tgt: str):
+    def term_hits(self, text: str, src: str, tgt: str, tbs: set | None = None):
+        """`tbs`: termbase ids switched on for this document; None means all."""
         words = _word.findall(text.lower())
         seen, out = set(), []
         for n in range(min(self.max_words, len(words)), 0, -1):
             for i in range(len(words) - n + 1):
                 key = " ".join(words[i:i + n])
                 e = self.terms.get(key)
-                if e and key not in seen and (not e["pair"][0] or e["pair"] == (src, tgt)):
-                    seen.add(key)
-                    out.append({"src": e["src"], "tgts": e["tgts"], "kind": e["kind"]})
+                if not e or key in seen or (e["pair"][0] and e["pair"] != (src, tgt)):
+                    continue
+                tgts = [t["t"] for t in e["tgts"] if tbs is None or t["tb"] is None or t["tb"] in tbs]
+                if not tgts:
+                    continue
+                seen.add(key)
+                out.append({"src": e["src"], "tgts": tgts, "kind": e["kind"]})
         return out
 
-    def tm_candidates(self, text: str, src: str, tgt: str, limit: int = 40):
+    def tm_candidates(self, text: str, src: str, tgt: str, limit: int = 40, tms: list | None = None):
         words = sorted({w for w in _word.findall(text.lower()) if len(w) >= 4}, key=len, reverse=True)[:8]
         if not words or not self.has_tm:
             return []
         q = " OR ".join('"' + w.replace('"', "") + '"' for w in words)
+        sql = ("select t.source_text, t.target_text, t.tm_id from translation_units_fts f "
+               "join translation_units t on t.id = f.rowid "
+               "where translation_units_fts match ? and lower(substr(t.source_lang,1,2)) = ? "
+               "and lower(substr(t.target_lang,1,2)) = ?")
+        args = [q, src, tgt]
+        if tms is not None:
+            sql += " and t.tm_id in (%s)" % ",".join("?" * len(tms))
+            args += tms
+        sql += " limit ?"
+        args.append(limit)
         with self.lock:
-            rows = self.con.execute(
-                "select t.source_text, t.target_text, t.tm_id from translation_units_fts f "
-                "join translation_units t on t.id = f.rowid "
-                "where translation_units_fts match ? and lower(substr(t.source_lang,1,2)) = ? "
-                "and lower(substr(t.target_lang,1,2)) = ? limit ?", (q, src, tgt, limit)).fetchall()
+            rows = self.con.execute(sql, args).fetchall()
         return [{"source": s, "target": t, "name": name} for s, t, name in rows]
 
     def add_term(self, src: str, tgt: str, src_lang: str, tgt_lang: str, termbase_id=None):
@@ -167,7 +186,7 @@ class Engine:
         finally:
             rw.close()
         tb["count"] = tb.get("count", 0) + 1
-        self._add_pair(src, tgt, "", (src_lang[:2], tgt_lang[:2]))
+        self._add_pair(src, tgt, "", (src_lang[:2], tgt_lang[:2]), str(tb["id"]))
         return tb
 
 
@@ -208,10 +227,12 @@ class Handler(SimpleHTTPRequestHandler):
         try:
             if u.path == "/api/status":
                 return self._json(e.status())
+            tbs = set(x for x in q["tbs"].split(",") if x) if "tbs" in q else None
+            tms = [x for x in q["tms"].split(",") if x] if "tms" in q else None
             if u.path == "/api/terms":
-                return self._json(e.term_hits(q.get("text", ""), q.get("src", "").lower(), q.get("tgt", "").lower()))
+                return self._json(e.term_hits(q.get("text", ""), q.get("src", "").lower(), q.get("tgt", "").lower(), tbs))
             if u.path == "/api/tm":
-                return self._json(e.tm_candidates(q.get("text", ""), q.get("src", "").lower(), q.get("tgt", "").lower()))
+                return self._json(e.tm_candidates(q.get("text", ""), q.get("src", "").lower(), q.get("tgt", "").lower(), tms=tms))
         except Exception as ex:                       # noqa: BLE001
             return self._json({"error": str(ex)}, 500)
         self._json({"error": "unknown endpoint"}, 404)

@@ -28,11 +28,14 @@ class ProjectRecord:
     source_lang: str
     target_lang: str
     segments: list[SegmentRecord] = field(default_factory=list)
+    resources: dict = field(default_factory=dict)   # termbases, tms, project_termbase: the pane's choices
 
     def to_xml(self) -> str:
         ET.register_namespace("sv", NS)
         root = ET.Element(f"{{{NS}}}project",
                           {"source_lang": self.source_lang, "target_lang": self.target_lang})
+        if self.resources:
+            ET.SubElement(root, f"{{{NS}}}resources", {k: str(v) for k, v in self.resources.items()})
         for s in self.segments:
             el = ET.SubElement(root, f"{{{NS}}}segment",
                                {"id": s.id, "status": s.status, "origin": s.origin,
@@ -45,6 +48,9 @@ class ProjectRecord:
     def from_xml(cls, xml: str) -> "ProjectRecord":
         root = ET.fromstring(xml)
         rec = cls(root.get("source_lang", ""), root.get("target_lang", ""))
+        res = root.find(f"{{{NS}}}resources")
+        if res is not None:
+            rec.resources = dict(res.attrib)
         for el in root.findall(f"{{{NS}}}segment"):
             rec.segments.append(SegmentRecord(
                 id=el.get("id"),

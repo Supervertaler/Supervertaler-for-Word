@@ -64,6 +64,19 @@
   .term.nt .k { background: var(--warn); }
   .term .more { color: var(--muted); margin-left: 3px; }
   #termmode { font: inherit; font-size: 11px; color: var(--muted); border: 0; background: transparent; cursor: pointer; margin-right: 8px; }
+  header button.link { background: none; border: 0; color: var(--blue); padding: 2px 6px; font-size: 12px; }
+  #resources { flex: 1; overflow: auto; display: flex; flex-direction: column; }
+  #resources .bar { display: flex; gap: 8px; align-items: center; padding: 8px 10px; border-bottom: 1px solid var(--line); background: #fff; position: sticky; top: 0; }
+  #resources .bar input { flex: 1; font: inherit; padding: 4px 8px; border: 1px solid var(--line); border-radius: 4px; }
+  #resources h2 { position: sticky; top: 42px; background: #f3f3f3; z-index: 1; }
+  .res { display: grid; grid-template-columns: 24px 1fr 52px 70px 60px; gap: 6px; align-items: center; padding: 5px 10px; border-bottom: 1px solid var(--line); font-size: 12.5px; }
+  .res.off { color: var(--muted); }
+  .res .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .res .pair { color: var(--muted); font-size: 11px; }
+  .res .count { text-align: right; color: var(--muted); font-size: 11px; }
+  .res .proj { font-size: 11px; color: var(--muted); display: flex; align-items: center; gap: 3px; }
+  .res.other { opacity: .7; }
+  .res-note { padding: 8px 10px; color: var(--muted); font-size: 11px; }
   #picker { display: none; margin: 4px 0 0; border: 1px solid var(--line); border-radius: 4px; background: #fff; overflow: hidden; }
   #picker.open { display: block; }
   #picker div { display: flex; gap: 8px; padding: 4px 8px; cursor: pointer; border-top: 1px solid var(--line); }
@@ -116,9 +129,18 @@
 </head>
 <body>
 <header>
+  <button id="res-open" class="link" title="Termbases and translation memories for this document">Resources</button>
   <span class="counts" id="counts"></span>
 </header>
 <main>
+  <section id="resources" hidden>
+    <div class="bar"><input id="res-filter" placeholder="Filter by name"><button id="res-done">Done</button></div>
+    <h2>Termbases <span class="pill" id="res-tb-count"></span></h2>
+    <div id="res-tbs"></div>
+    <h2>Translation memories <span class="pill" id="res-tm-count"></span></h2>
+    <div id="res-tms"></div>
+    <div class="res-note">Switched-on resources are used for lookups on this document and remembered in the file. The project termbase is where Add term writes. Resources for another language pair are listed last.</div>
+  </section>
   <section id="segment">
     <h2>Segment <span class="pill"><select id="termmode" title="How termbase hits are shown"><option value="lens">Terms: lens</option><option value="chips">Terms: chips</option></select><span id="segid"></span></span></h2>
     <div id="src">Click into a sentence in the document.</div>
@@ -183,13 +205,15 @@ const langs = () => ({src: record ? record.sourceLang : "", tgt: record ? record
 async function getTerms(text) {
   if (!engine) return MOCK_TB;
   const {src, tgt} = langs();
-  const r = await fetch(`/api/terms?text=${encodeURIComponent(text)}&src=${src}&tgt=${tgt}`);
+  const tbs = record && record.resources.tbs ? "&tbs=" + record.resources.tbs.join(",") : "";
+  const r = await fetch(`/api/terms?text=${encodeURIComponent(text)}&src=${src}&tgt=${tgt}${tbs}`);
   return r.ok ? r.json() : [];
 }
 async function getTmCandidates(text) {
   if (!engine) return MOCK_TM_C;
   const {src, tgt} = langs();
-  const r = await fetch(`/api/tm?text=${encodeURIComponent(text)}&src=${src}&tgt=${tgt}`);
+  const tms = record && record.resources.tms ? "&tms=" + record.resources.tms.map(encodeURIComponent).join(",") : "";
+  const r = await fetch(`/api/tm?text=${encodeURIComponent(text)}&src=${src}&tgt=${tgt}${tms}`);
   return r.ok ? r.json() : [];
 }
 const words = s => s.toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, " ").split(/\s+/).filter(Boolean);
@@ -271,8 +295,12 @@ async function loadRecord() {
     await ctx.sync();
     const doc = new DOMParser().parseFromString(xml.value, "text/xml");
     const root = doc.documentElement;
+    const resEl = doc.getElementsByTagNameNS(NS, "resources")[0];
+    const list = v => v == null ? null : v.split(",").filter(Boolean);
     record = {
       sourceLang: root.getAttribute("source_lang"), targetLang: root.getAttribute("target_lang"),
+      resources: resEl ? {tbs: list(resEl.getAttribute("termbases")), tms: list(resEl.getAttribute("tms")),
+                          project: resEl.getAttribute("project_termbase") || null} : {tbs: null, tms: null, project: null},
       segments: [...doc.getElementsByTagNameNS(NS, "segment")].map(el => ({
         id: el.getAttribute("id"), status: el.getAttribute("status") || "draft",
         origin: el.getAttribute("origin") || "",
@@ -287,6 +315,14 @@ function recordXml() {
   const x = new XMLSerializer(), d = document.implementation.createDocument(NS, "sv:project");
   const root = d.documentElement;
   root.setAttribute("source_lang", record.sourceLang); root.setAttribute("target_lang", record.targetLang);
+  const r = record.resources || {};
+  if (r.tbs || r.tms || r.project) {
+    const re = d.createElementNS(NS, "sv:resources");
+    if (r.tbs) re.setAttribute("termbases", r.tbs.join(","));
+    if (r.tms) re.setAttribute("tms", r.tms.join(","));
+    if (r.project) re.setAttribute("project_termbase", r.project);
+    root.appendChild(re);
+  }
   for (const s of record.segments) {
     const el = d.createElementNS(NS, "sv:segment");
     el.setAttribute("id", s.id); el.setAttribute("status", s.status);
@@ -638,6 +674,64 @@ async function draftAll() {
   renderCounts(); renderGrid();
 }
 
+// ---- Resources view: termbases and TMs for this document, kept in the record
+const pairOf = t => `${t.src || "?"} → ${t.tgt || "?"}`;
+const samePair = t => { const {src, tgt} = langs(); return (t.src === src && t.tgt === tgt) || (t.src === tgt && t.tgt === src); };
+function resActive(kind, key) {
+  const r = record.resources;
+  const set = kind === "tb" ? r.tbs : r.tms;
+  return set === null ? true : set.includes(String(key));
+}
+function resSet(kind, key, on) {
+  const r = record.resources;
+  const all = kind === "tb" ? engine.termbases.map(t => String(t.id)) : engine.tms.map(t => t.tm_id);
+  let set = (kind === "tb" ? r.tbs : r.tms) || all.slice();
+  set = on ? [...new Set([...set, String(key)])] : set.filter(k => k !== String(key));
+  if (kind === "tb") r.tbs = set; else r.tms = set;
+}
+function renderResources() {
+  if (!engine) { $("res-tbs").innerHTML = '<div class="empty">No engine: resources come from the local engine.</div>'; $("res-tms").innerHTML = ""; return; }
+  const f = $("res-filter").value.trim().toLowerCase();
+  const proj = record.resources.project || (engine.project_termbase ? String(engine.project_termbase.id) : null);
+  const isProj = t => String(t.id) === proj && t.tm_id === undefined;
+  const order = list => list.filter(t => !f || t.name.toLowerCase().includes(f))
+    .sort((a, b) => (isProj(b) - isProj(a)) || (samePair(b) - samePair(a)) || a.name.localeCompare(b.name));
+  const tbs = order(engine.termbases), tms = order(engine.tms);
+  $("res-tb-count").textContent = `${engine.termbases.filter(t => resActive("tb", t.id)).length} of ${engine.termbases.length} on`;
+  $("res-tm-count").textContent = `${engine.tms.filter(t => resActive("tm", t.tm_id)).length} of ${engine.tms.length} on`;
+  $("res-tbs").innerHTML = tbs.map(t => {
+    const on = resActive("tb", t.id), isProj = String(t.id) === proj;
+    return `<div class="res ${on ? "" : "off"} ${samePair(t) ? "" : "other"}" data-id="${t.id}">
+      <input type="checkbox" ${on ? "checked" : ""} data-kind="tb" data-key="${t.id}">
+      <span class="name" title="${esc(t.name)}">${esc(t.name)}</span><span class="pair">${pairOf(t)}</span>
+      <span class="count">${(t.count || 0).toLocaleString()} terms</span>
+      <label class="proj"><input type="radio" name="proj" value="${t.id}" ${isProj ? "checked" : ""}>project</label></div>`;
+  }).join("") || '<div class="empty">No termbases match.</div>';
+  $("res-tms").innerHTML = tms.map(t => {
+    const on = resActive("tm", t.tm_id);
+    return `<div class="res ${on ? "" : "off"} ${samePair(t) ? "" : "other"}">
+      <input type="checkbox" ${on ? "checked" : ""} data-kind="tm" data-key="${esc(t.tm_id)}">
+      <span class="name" title="${esc(t.name)}">${esc(t.name)}</span><span class="pair">${pairOf(t)}</span>
+      <span class="count">${(t.count || 0).toLocaleString()} units</span><span></span></div>`;
+  }).join("") || '<div class="empty">No translation memories match.</div>';
+  for (const cb of $("resources").querySelectorAll('input[type="checkbox"]'))
+    cb.onchange = () => { resSet(cb.dataset.kind, cb.dataset.key, cb.checked); renderResources(); };
+  for (const rb of $("resources").querySelectorAll('input[type="radio"]'))
+    rb.onchange = () => { record.resources.project = rb.value; $("pair-tb").value = rb.value; renderResources(); };
+}
+async function openResources() {
+  $("resources").hidden = false;
+  for (const id of ["segment", "matches", "grid"]) $(id).hidden = true;
+  renderResources();
+}
+async function closeResources() {
+  $("resources").hidden = true;
+  for (const id of ["segment", "matches", "grid"]) $(id).hidden = false;
+  if (record) { await Word.run(saveRecord); }
+  const seg = record && record.segments.find(x => x.id === currentId);
+  if (seg) renderSegment(seg, $("tgt").value);
+}
+
 Office.onReady(async info => {
   if (info.host !== Office.HostType.Word) { $("foot").textContent = "Open this pane in Word."; return; }
   await detectEngine();
@@ -665,6 +759,10 @@ Office.onReady(async info => {
     const seg = record && record.segments.find(x => x.id === currentId);
     if (seg) renderSegment(seg, $("tgt").value);
   };
+  $("res-open").onclick = openResources;
+  $("res-done").onclick = closeResources;
+  $("res-filter").oninput = renderResources;
+  if (record && engine && record.resources.project) $("pair-tb").value = record.resources.project;
   $("confirm").onclick = confirmAndNext;
   $("draftall").onclick = draftAll;
   $("tgt").addEventListener("keydown", e => { if (e.ctrlKey && e.key === "Enter") { e.preventDefault(); confirmAndNext(); } });
@@ -675,7 +773,8 @@ Office.onReady(async info => {
   for (const id of ["pair-src", "pair-tgt"]) $(id).addEventListener("keydown", e => { if (e.key === "Enter") addTermPair(); });
   document.addEventListener("keydown", e => { if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "t") { e.preventDefault(); addTermPair(); } });
   const engineNote = engine
-    ? `engine: ${engine.termbases.map(t => t.name).join(", ")} (${engine.terms.toLocaleString()} terms) · TM ${engine.tm_units.toLocaleString()} units`
+    ? `engine: ${engine.termbases.length} termbases, ${engine.terms.toLocaleString()} terms · ${(engine.tms || []).length} TMs, ${engine.tm_units.toLocaleString()} units` +
+      (engine.project_termbase ? ` · new terms → ${engine.project_termbase.name}` : "")
     : "no engine · matches are a mock";
   $("foot").textContent = record ? `${record.sourceLang} → ${record.targetLang} · ${engineNote}`
                                  : "This document has no Supervertaler record yet.";
