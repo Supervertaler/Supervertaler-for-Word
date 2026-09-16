@@ -64,9 +64,12 @@ class Engine:
 
     # ---- loading
     def _load_termbases(self, ids):
-        rows = self.con.execute(
-            "select id, name, source_lang, target_lang from termbases where id in (%s)"
-            % ",".join("?" * len(ids)), ids).fetchall()
+        if ids == ["all"]:
+            rows = self.con.execute("select id, name, source_lang, target_lang from termbases order by id").fetchall()
+        else:
+            rows = self.con.execute(
+                "select id, name, source_lang, target_lang from termbases where id in (%s)"
+                % ",".join("?" * len(ids)), ids).fetchall()
         return [{"id": r[0], "name": r[1], "src": (r[2] or "").lower(), "tgt": (r[3] or "").lower(), "count": 0} for r in rows]
 
     def _add_term(self, src, tgt, kind, pair):
@@ -82,12 +85,13 @@ class Engine:
 
     def _load_terms(self, tb):
         rows = self.con.execute(
-            "select source_term, target_term, is_nontranslatable, synonyms from termbase_terms where termbase_id = ?",
-            (str(tb["id"]),)).fetchall()
-        pair = (tb["src"], tb["tgt"])
-        for src, tgt, nt, syn in rows:
+            "select source_term, target_term, is_nontranslatable, synonyms, source_lang, target_lang "
+            "from termbase_terms where termbase_id = ?", (str(tb["id"]),)).fetchall()
+        for src, tgt, nt, syn, sl, tl in rows:
             if not src:
                 continue
+            # the term's own languages win; a termbase's header can be wrong or mixed
+            pair = ((sl or tb["src"]).lower()[:2], (tl or tb["tgt"]).lower()[:2])
             self._add_term(src, tgt or "", "nt" if nt else "", pair)
             for s in (syn or "").split(";"):
                 if s.strip():
@@ -197,7 +201,7 @@ class Handler(SimpleHTTPRequestHandler):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--db", required=True)
-    ap.add_argument("--termbases", default="4", help="comma-separated termbase ids")
+    ap.add_argument("--termbases", default="all", help="comma-separated termbase ids, or all")
     ap.add_argument("--port", type=int, default=3000)
     a = ap.parse_args()
     Handler.engine = Engine(a.db, [x.strip() for x in a.termbases.split(",") if x.strip()])
