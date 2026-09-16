@@ -44,6 +44,7 @@
   #pair input { font: inherit; padding: 3px 6px; border: 1px solid var(--line); border-radius: 3px; min-width: 120px; flex: 1; background: #fff; }
   #pair .arrow { color: var(--muted); }
   #pair button { padding: 3px 10px; }
+  #pair select { font: inherit; font-size: 12px; padding: 3px 4px; border: 1px solid var(--line); border-radius: 3px; background: #fff; max-width: 200px; }
   #pair .hint2 { color: var(--muted); font-size: 11px; width: 100%; }
   #toast { position: fixed; left: 50%; bottom: 40px; transform: translateX(-50%); background: var(--ink); color: #fff; padding: 6px 12px; border-radius: 4px; font-size: 12px; opacity: 0; transition: opacity .2s; pointer-events: none; }
   #toast.show { opacity: .92; }
@@ -124,6 +125,7 @@
     <div id="picker"></div>
     <div id="pair">
       <input id="pair-src" placeholder="source term"><span class="arrow">&rarr;</span><input id="pair-tgt" placeholder="target term">
+      <select id="pair-tb" title="Termbase the term goes to" hidden></select>
       <button id="pair-add">Add term</button><button id="pair-clear" class="ghost">Clear</button>
       <span class="hint2">Click words in the source to select them &middot; select the target here or on the page &middot; Ctrl+Shift+T adds</span>
     </div>
@@ -465,12 +467,14 @@ function addTermPair() {
   if (engine) {
     const {src: sl, tgt: tl} = langs();
     fetch("/api/terms", {method: "POST", headers: {"Content-Type": "application/json"},
-          body: JSON.stringify({src, tgt, src_lang: sl, tgt_lang: tl})}).catch(() => {});
+          body: JSON.stringify({src, tgt, src_lang: sl, tgt_lang: tl, termbase_id: $("pair-tb").value})})
+      .then(r => r.json()).then(r => toast(r.ok ? `Added to ${r.termbase}: ${src} → ${tgt}` : "Not added: " + (r.error || "")))
+      .catch(() => toast("Not added: engine unreachable"));
   } else {
     const existing = MOCK_TB.find(t => t.src.toLowerCase() === src.toLowerCase());
     if (existing) { if (!existing.tgts.includes(tgt)) existing.tgts.push(tgt); } else MOCK_TB.push({src, tgts: [tgt], kind: ""});
   }
-  toast("Added: " + src + " \u2192 " + tgt);
+  if (!engine) toast("Added: " + src + " \u2192 " + tgt);
   clearPair();
   const seg = record && record.segments.find(x => x.id === currentId);
   if (seg) { const keep = $("tgt").value; renderSegment(seg, keep); }
@@ -637,6 +641,12 @@ async function draftAll() {
 Office.onReady(async info => {
   if (info.host !== Office.HostType.Word) { $("foot").textContent = "Open this pane in Word."; return; }
   await detectEngine();
+  if (engine && engine.termbases && engine.termbases.length) {
+    const sel = $("pair-tb"), proj = engine.project_termbase;
+    const rest = engine.termbases.filter(t => !proj || t.id !== proj.id).sort((a, b) => a.name.localeCompare(b.name));
+    sel.innerHTML = (proj ? [proj] : []).concat(rest).map(t => `<option value="${t.id}">${esc(t.name)}</option>`).join("");
+    sel.hidden = false;
+  }
   await loadRecord();
   gridOrder = await documentOrder();
   if (record) {

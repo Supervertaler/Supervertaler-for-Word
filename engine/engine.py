@@ -7,11 +7,12 @@ Endpoints (all JSON):
     GET  /api/status                      what is loaded
     GET  /api/terms?text=&src=nl&tgt=en   termbase hits for a sentence
     GET  /api/tm?text=&src=nl&tgt=en      TM candidates for a sentence (the pane scores them)
-    POST /api/terms  {src, tgt}           add a term: kept in a local pending file, not the database
+    POST /api/terms  {src, tgt, src_lang, tgt_lang, termbase_id}
+                                          add a term to a termbase in the database
 
-The database is opened read-only. Nothing here writes to it. Terms added
-from the pane go to engine/pending_terms.json (ignored by git) and are served
-alongside the database terms until they are imported properly.
+Reads use a read-only connection. Adding a term is the one write, done with
+the same columns the Trados plugin uses, so Studio sees the term at once.
+--project-termbase names the default destination (id or name).
 
 Scale: terms for the configured termbases are held in memory (51,000 for
 BEIJER, trivial). TM candidates come from the database's own FTS5 index on
@@ -25,6 +26,7 @@ import os
 import re
 import sqlite3
 import threading
+import uuid
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
@@ -50,17 +52,23 @@ def norm(s: str) -> str:
 
 
 class Engine:
-    def __init__(self, db_path: str, termbase_ids: list[str]):
+    def __init__(self, db_path: str, termbase_ids: list[str], project_termbase: str | None = None):
         self.db_path = db_path
         self.con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, check_same_thread=False)
         self.lock = threading.Lock()
         self.termbases = self._load_termbases(termbase_ids)
+        self.project_termbase = None
+        if project_termbase:
+            self.project_termbase = next((t for t in self.termbases
+                                          if str(t["id"]) == project_termbase or t["name"] == project_termbase), None)
         self.terms: dict[str, dict] = {}          # norm(source) -> {src, tgts, kind, pair}
         self.max_words = 1
         for tb in self.termbases:
             self._load_terms(tb)
         self._load_pending()
-        self.tm_units = self.con.execute("select count(*) from translation_units").fetchone()[0]
+        tables = {r[0] for r in self.con.execute("select name from sqlite_master where type='table'")}
+        self.has_tm = {"translation_units", "translation_units_fts"} <= tables
+        self.tm_units = self.con.execute("select count(*) from translation_units").fetchone()[0] if self.has_tm else 0
 
     # ---- loading
     def _load_termbases(self, ids):
@@ -113,7 +121,7 @@ class Engine:
     # ---- queries
     def status(self):
         return {"ok": True, "db": os.path.basename(self.db_path), "termbases": self.termbases,
-                "terms": len(self.terms), "tm_units": self.tm_units}
+                "project_termbase": self.project_termbase, "terms": len(self.terms), "tm_units": self.tm_units}
 
     def term_hits(self, text: str, src: str, tgt: str):
         words = _word.findall(text.lower())
@@ -129,7 +137,7 @@ class Engine:
 
     def tm_candidates(self, text: str, src: str, tgt: str, limit: int = 40):
         words = sorted({w for w in _word.findall(text.lower()) if len(w) >= 4}, key=len, reverse=True)[:8]
-        if not words:
+        if not words or not self.has_tm:
             return []
         q = " OR ".join('"' + w.replace('"', "") + '"' for w in words)
         with self.lock:
@@ -140,11 +148,27 @@ class Engine:
                 "and lower(substr(t.target_lang,1,2)) = ? limit ?", (q, src, tgt, limit)).fetchall()
         return [{"source": s, "target": t, "name": name} for s, t, name in rows]
 
-    def add_pending(self, src: str, tgt: str, src_lang: str, tgt_lang: str):
-        items = json.load(open(PENDING, encoding="utf-8")) if os.path.exists(PENDING) else []
-        items.append({"src": src, "tgt": tgt, "src_lang": src_lang, "tgt_lang": tgt_lang})
-        json.dump(items, open(PENDING, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
-        self._add_pair(src, tgt, "", (src_lang, tgt_lang))
+    def add_term(self, src: str, tgt: str, src_lang: str, tgt_lang: str, termbase_id=None):
+        """Insert one term the way the Trados plugin does (same columns), into
+        the given termbase or the project termbase. Own short-lived read-write
+        connection; WAL mode lets Studio keep the database open meanwhile."""
+        tb = next((t for t in self.termbases if str(t["id"]) == str(termbase_id)), None) if termbase_id else self.project_termbase
+        if tb is None:
+            raise ValueError("no destination termbase")
+        rw = sqlite3.connect(self.db_path, timeout=5)
+        try:
+            with rw:
+                rw.execute(
+                    "INSERT INTO termbase_terms (source_term, target_term, termbase_id, source_lang, target_lang, "
+                    "definition, domain, notes, forbidden, case_sensitive, is_nontranslatable, term_uuid, "
+                    "source_abbreviation, target_abbreviation, url, client, project, part_of_speech, context) "
+                    "VALUES (?, ?, ?, ?, ?, '', '', '', 0, 0, 0, ?, '', '', '', '', '', '', '')",
+                    (src.strip(), tgt.strip(), int(tb["id"]), src_lang, tgt_lang, str(uuid.uuid4())))
+        finally:
+            rw.close()
+        tb["count"] = tb.get("count", 0) + 1
+        self._add_pair(src, tgt, "", (src_lang[:2], tgt_lang[:2]))
+        return tb
 
 
 class Handler(SimpleHTTPRequestHandler):
@@ -200,8 +224,12 @@ class Handler(SimpleHTTPRequestHandler):
             src, tgt = (data.get("src") or "").strip(), (data.get("tgt") or "").strip()
             if not src or not tgt:
                 return self._json({"error": "src and tgt required"}, 400)
-            self.engine.add_pending(src, tgt, (data.get("src_lang") or "").lower(), (data.get("tgt_lang") or "").lower())
-            return self._json({"ok": True, "pending": True})
+            try:
+                tb = self.engine.add_term(src, tgt, (data.get("src_lang") or "").lower(), (data.get("tgt_lang") or "").lower(),
+                                          data.get("termbase_id"))
+            except Exception as ex:                   # noqa: BLE001
+                return self._json({"error": str(ex)}, 500)
+            return self._json({"ok": True, "termbase": tb["name"]})
         self._json({"error": "unknown endpoint"}, 404)
 
 
@@ -209,12 +237,16 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--db", required=True)
     ap.add_argument("--termbases", default="all", help="comma-separated termbase ids, or all")
+    ap.add_argument("--project-termbase", default=None, help="id or name of the termbase new terms go to")
     ap.add_argument("--port", type=int, default=3000)
     a = ap.parse_args()
-    Handler.engine = Engine(a.db, [x.strip() for x in a.termbases.split(",") if x.strip()])
+    Handler.engine = Engine(a.db, [x.strip() for x in a.termbases.split(",") if x.strip()], a.project_termbase)
+    if a.project_termbase and Handler.engine.project_termbase is None:
+        raise SystemExit("project termbase not found: " + a.project_termbase)
     st = Handler.engine.status()
-    print("engine: %s | termbases: %s | %d terms | %d TM units"
-          % (st["db"], ", ".join(f'{t["name"]} ({t["count"]})' for t in st["termbases"]), st["terms"], st["tm_units"]))
+    print("engine: %s | %d termbases | %d terms | %d TM units | new terms -> %s"
+          % (st["db"], len(st["termbases"]), st["terms"], st["tm_units"],
+             st["project_termbase"]["name"] if st["project_termbase"] else "(none)"))
     srv = ThreadingHTTPServer(("127.0.0.1", a.port), partial(Handler, directory=STATIC))
     print("serving the pane on http://localhost:%d/index.html" % a.port)
     srv.serve_forever()
