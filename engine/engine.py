@@ -139,6 +139,11 @@ class Engine:
 class Handler(SimpleHTTPRequestHandler):
     engine: Engine = None
 
+    def end_headers(self):                        # never let Word's browser cache the pane
+        self.send_header("Cache-Control", "no-store, must-revalidate")
+        self.send_header("Expires", "0")
+        super().end_headers()
+
     def log_message(self, fmt, *args):            # quiet, except errors
         if args and str(args[1]).startswith(("4", "5")):
             super().log_message(fmt, *args)
@@ -148,7 +153,6 @@ class Handler(SimpleHTTPRequestHandler):
         self.send_response(code)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(body)
 
