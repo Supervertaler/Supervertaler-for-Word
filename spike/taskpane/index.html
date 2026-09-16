@@ -68,7 +68,13 @@
   #resources { flex: 1; overflow: auto; display: flex; flex-direction: column; }
   #resources .bar { display: flex; gap: 8px; align-items: center; padding: 8px 10px; border-bottom: 1px solid var(--line); background: #fff; position: sticky; top: 0; }
   #resources .bar input { flex: 1; font: inherit; padding: 4px 8px; border: 1px solid var(--line); border-radius: 4px; }
-  #resources h2 { position: sticky; top: 42px; background: #f3f3f3; z-index: 1; }
+  #resources .tabs { display: flex; background: #fff; border-bottom: 1px solid var(--line); position: sticky; top: 42px; z-index: 2; }
+  #resources .tab { flex: 1; background: none; border: 0; border-bottom: 2px solid transparent; color: var(--muted); padding: 7px 8px; border-radius: 0; }
+  #resources .tab.on { color: var(--blue); border-bottom-color: var(--blue); font-weight: 600; }
+  #resources h2 { position: sticky; top: 77px; background: #f3f3f3; z-index: 1; }
+  #resources .bulk { margin-left: 10px; display: inline-flex; gap: 8px; text-transform: none; letter-spacing: 0; font-weight: 400; }
+  #resources .bulk a { color: var(--blue); cursor: pointer; }
+  #resources .bulk a:hover { text-decoration: underline; }
   .res { display: grid; grid-template-columns: 24px 1fr 52px 70px 60px; gap: 6px; align-items: center; padding: 5px 10px; border-bottom: 1px solid var(--line); font-size: 12.5px; }
   .res.off { color: var(--muted); }
   .res .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -135,10 +141,11 @@
 <main>
   <section id="resources" hidden>
     <div class="bar"><input id="res-filter" placeholder="Filter by name"><button id="res-done">Done</button></div>
-    <h2>Termbases <span class="pill" id="res-tb-count"></span></h2>
+    <div class="tabs"><button class="tab on" data-tab="tb" id="tab-tb">Termbases</button><button class="tab" data-tab="tm" id="tab-tm">Translation memories</button></div>
+    <h2 id="res-tb-head">Termbases <span class="bulk" data-kind="tb"><a data-mode="pair">This pair</a><a data-mode="all">All</a><a data-mode="none">None</a></span><span class="pill" id="res-tb-count"></span></h2>
     <div id="res-tbs"></div>
-    <h2>Translation memories <span class="pill" id="res-tm-count"></span></h2>
-    <div id="res-tms"></div>
+    <h2 id="res-tm-head" hidden>Translation memories <span class="bulk" data-kind="tm"><a data-mode="pair">This pair</a><a data-mode="all">All</a><a data-mode="none">None</a></span><span class="pill" id="res-tm-count"></span></h2>
+    <div id="res-tms" hidden></div>
     <div class="res-note">Switched-on resources are used for lookups on this document and remembered in the file. The project termbase is where Add term writes. Resources for another language pair are listed last.</div>
   </section>
   <section id="segment">
@@ -689,6 +696,30 @@ function resSet(kind, key, on) {
   set = on ? [...new Set([...set, String(key)])] : set.filter(k => k !== String(key));
   if (kind === "tb") r.tbs = set; else r.tms = set;
 }
+function resBulk(kind, mode) {
+  const list = kind === "tb" ? engine.termbases : engine.tms;
+  const key = t => kind === "tb" ? String(t.id) : t.tm_id;
+  const chosen = list.filter(t => mode === "all" || (mode === "pair" && samePair(t))).map(key);
+  if (kind === "tb") record.resources.tbs = chosen; else record.resources.tms = chosen;
+  renderResources();
+}
+function defaultResources() {
+  // A document with no selection yet starts with the resources for its own
+  // language pair, not with all 84 termbases.
+  if (!engine || !record) return;
+  const r = record.resources;
+  if (r.tbs === null) r.tbs = engine.termbases.filter(samePair).map(t => String(t.id));
+  if (r.tms === null) r.tms = (engine.tms || []).filter(samePair).map(t => t.tm_id);
+  if (!r.project && engine.project_termbase) r.project = String(engine.project_termbase.id);
+  if (r.project && !r.tbs.includes(r.project)) r.tbs.push(r.project);
+}
+let resTab = "tb";
+function showResTab(tab) {
+  resTab = tab;
+  $("tab-tb").classList.toggle("on", tab === "tb"); $("tab-tm").classList.toggle("on", tab === "tm");
+  $("res-tb-head").hidden = $("res-tbs").hidden = tab !== "tb";
+  $("res-tm-head").hidden = $("res-tms").hidden = tab !== "tm";
+}
 function renderResources() {
   if (!engine) { $("res-tbs").innerHTML = '<div class="empty">No engine: resources come from the local engine.</div>'; $("res-tms").innerHTML = ""; return; }
   const f = $("res-filter").value.trim().toLowerCase();
@@ -697,8 +728,11 @@ function renderResources() {
   const order = list => list.filter(t => !f || t.name.toLowerCase().includes(f))
     .sort((a, b) => (isProj(b) - isProj(a)) || (samePair(b) - samePair(a)) || a.name.localeCompare(b.name));
   const tbs = order(engine.termbases), tms = order(engine.tms);
-  $("res-tb-count").textContent = `${engine.termbases.filter(t => resActive("tb", t.id)).length} of ${engine.termbases.length} on`;
-  $("res-tm-count").textContent = `${engine.tms.filter(t => resActive("tm", t.tm_id)).length} of ${engine.tms.length} on`;
+  const tbOn = engine.termbases.filter(t => resActive("tb", t.id)).length, tmOn = engine.tms.filter(t => resActive("tm", t.tm_id)).length;
+  $("res-tb-count").textContent = `${tbOn} of ${engine.termbases.length} on`;
+  $("res-tm-count").textContent = `${tmOn} of ${engine.tms.length} on`;
+  $("tab-tb").textContent = `Termbases · ${tbOn} on`;
+  $("tab-tm").textContent = `Translation memories · ${tmOn} on`;
   $("res-tbs").innerHTML = tbs.map(t => {
     const on = resActive("tb", t.id), isProj = String(t.id) === proj;
     return `<div class="res ${on ? "" : "off"} ${samePair(t) ? "" : "other"}" data-id="${t.id}">
@@ -714,6 +748,8 @@ function renderResources() {
       <span class="name" title="${esc(t.name)}">${esc(t.name)}</span><span class="pair">${pairOf(t)}</span>
       <span class="count">${(t.count || 0).toLocaleString()} units</span><span></span></div>`;
   }).join("") || '<div class="empty">No translation memories match.</div>';
+  for (const a of $("resources").querySelectorAll(".bulk a"))
+    a.onclick = () => resBulk(a.parentElement.dataset.kind, a.dataset.mode);
   for (const cb of $("resources").querySelectorAll('input[type="checkbox"]'))
     cb.onchange = () => { resSet(cb.dataset.kind, cb.dataset.key, cb.checked); renderResources(); };
   for (const rb of $("resources").querySelectorAll('input[type="radio"]'))
@@ -760,8 +796,10 @@ Office.onReady(async info => {
     if (seg) renderSegment(seg, $("tgt").value);
   };
   $("res-open").onclick = openResources;
+  $("tab-tb").onclick = () => showResTab("tb"); $("tab-tm").onclick = () => showResTab("tm");
   $("res-done").onclick = closeResources;
   $("res-filter").oninput = renderResources;
+  defaultResources();
   if (record && engine && record.resources.project) $("pair-tb").value = record.resources.project;
   $("confirm").onclick = confirmAndNext;
   $("draftall").onclick = draftAll;
