@@ -97,7 +97,9 @@
   .term.nt b { color: var(--warn); }
   .empty { padding: 8px 10px; color: var(--muted); font-style: italic; }
   #grid { flex: 1; overflow: auto; }
-  table { width: 100%; border-collapse: collapse; }
+  table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+  th.n, td.n { width: 30px; } th.st, td.st { width: 20px; }
+  td { overflow-wrap: anywhere; }
   th { position: sticky; top: 0; background: #f3f3f3; font-weight: 600; text-align: left; font-size: 11px; padding: 4px 6px; border-bottom: 1px solid var(--line); }
   td { padding: 5px 6px; border-bottom: 1px solid var(--line); vertical-align: top; line-height: 1.35; }
   tr { cursor: pointer; }
@@ -141,7 +143,7 @@
   </section>
   <section id="grid">
     <table>
-      <thead><tr><th>#</th><th></th><th id="th-src">Source</th><th id="th-tgt">Target</th></tr></thead>
+      <thead><tr><th class="n">#</th><th class="st"></th><th id="th-src">Source</th><th id="th-tgt">Target</th></tr></thead>
       <tbody id="rows"></tbody>
     </table>
   </section>
@@ -167,7 +169,27 @@ const MOCK_TB = [
   ["cartographic data", ["cartografische gegevens", "kaartgegevens"], ""],
   ["mapping program", ["kaarttoepassing", "kaartprogramma"], ""],
   ["Web service", ["webdienst"], ""], ["integration", ["integratie"], ""], ["data", ["gegevens", "data"], ""],
-];
+].map(([src, tgts, kind]) => ({src, tgts, kind}));
+const MOCK_TM_C = MOCK_TM.map(([source, target, name]) => ({source, target, name}));
+
+// ---- the local engine, when one is serving this page; otherwise the mock
+let engine = null;
+async function detectEngine() {
+  try { const r = await fetch("/api/status", {cache: "no-store"}); if (r.ok) engine = await r.json(); } catch (e) { engine = null; }
+}
+const langs = () => ({src: record ? record.sourceLang : "", tgt: record ? record.targetLang : ""});
+async function getTerms(text) {
+  if (!engine) return MOCK_TB;
+  const {src, tgt} = langs();
+  const r = await fetch(`/api/terms?text=${encodeURIComponent(text)}&src=${src}&tgt=${tgt}`);
+  return r.ok ? r.json() : [];
+}
+async function getTmCandidates(text) {
+  if (!engine) return MOCK_TM_C;
+  const {src, tgt} = langs();
+  const r = await fetch(`/api/tm?text=${encodeURIComponent(text)}&src=${src}&tgt=${tgt}`);
+  return r.ok ? r.json() : [];
+}
 const words = s => s.toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, " ").split(/\s+/).filter(Boolean);
 function lcs(a, b) {                      // word-level LCS table for diff + score
   const m = a.length, n = b.length, d = Array.from({length: m + 1}, () => new Array(n + 1).fill(0));
@@ -175,9 +197,9 @@ function lcs(a, b) {                      // word-level LCS table for diff + sco
     d[i][j] = a[i] === b[j] ? d[i + 1][j + 1] + 1 : Math.max(d[i + 1][j], d[i][j + 1]);
   return d;
 }
-function fuzzy(source) {
+function fuzzy(source, cands) {
   const q = words(source);
-  return MOCK_TM.map(([s, t, name]) => {
+  return cands.map(({source: s, target: t, name}) => {
     const w = words(s), d = lcs(q, w);
     const pct = Math.round(100 * 2 * d[0][0] / (q.length + w.length));
     // render TM source with words that differ from the current source marked
@@ -190,11 +212,12 @@ function fuzzy(source) {
     return {pct, s: html.join(" "), t, name};
   }).filter(m => m.pct >= 50).sort((a, b) => b.pct - a.pct).slice(0, 5);
 }
-function termHits(source) {
-  const low = source.toLowerCase(), hits = [];
-  for (const [en, nl, kind] of MOCK_TB) {
-    const i = low.indexOf(en.toLowerCase());
-    if (i >= 0) hits.push({en, nl, kind, start: i, end: i + en.length});
+const reEsc = t => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+function termHits(source, terms) {
+  const hits = [];
+  for (const {src, tgts, kind} of terms) {
+    const m = new RegExp("(?<![\\p{L}\\p{N}])" + reEsc(src) + "(?![\\p{L}\\p{N}])", "iu").exec(source);
+    if (m) hits.push({src, tgts, kind, start: m.index, end: m.index + m[0].length});
   }
   hits.sort((a, b) => a.start - b.start || (b.end - b.start) - (a.end - a.start));
   const out = []; let last = -1;                    // drop overlaps, keep the earlier/longer
@@ -208,7 +231,8 @@ const esc = s => s.replace(/[&<>]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt
 const NS = "urn:supervertaler:word:1", TAG = "sv:seg:";
 const PLACEHOLDERS = new Set(["[empty segment]", "Click or tap here to enter text."]);
 const liveText = t => PLACEHOLDERS.has((t || "").trim()) ? "" : t;
-const targetOf = (seg, live) => (seg && live === seg.source) ? "" : live;
+const sameText = (a, b) => (a || "").trim().toLowerCase() === (b || "").trim().toLowerCase();
+const targetOf = (seg, live) => (seg && sameText(live, seg.source)) ? "" : live;
 let gridOrder = null;            // segment ids in document order, ghosts removed
 
 // Anchors as they sit on the page. A tracked move leaves a ghost behind (same
@@ -359,7 +383,7 @@ function renderGrid() {
   if (cur) cur.scrollIntoView({block: "center"});     // keep the current row mid-grid
 }
 
-let lensHits = [];
+let lensHits = [], renderToken = 0;
 function termMode() { try { return localStorage.getItem("sv.termmode") || "lens"; } catch (e) { return "lens"; } }
 function renderLens(source, hits) {
   lensHits = hits;
@@ -378,12 +402,12 @@ function renderLens(source, hits) {
     el.className = "hit" + (h.kind === "nt" ? " nt" : "");
     if (mode === "lens") {
       el.innerHTML = `<span class="ws">${esc(source.slice(h.start, h.end))}</span>` +
-        `<span class="tt">${esc(h.nl[0])}${h.kind === "nt" ? " · NT" : ""}<span class="n">${h.n}</span>` +
-        (h.nl.length > 1 ? `<span class="more">+${h.nl.length - 1}</span>` : "") + `</span>`;
-      el.querySelector(".tt").onclick = ev => { ev.stopPropagation(); h.nl.length > 1 ? openPicker(h) : insertTerm(h.nl[0]); };
+        `<span class="tt">${esc(h.tgts[0])}${h.kind === "nt" ? " · NT" : ""}<span class="n">${h.n}</span>` +
+        (h.tgts.length > 1 ? `<span class="more">+${h.tgts.length - 1}</span>` : "") + `</span>`;
+      el.querySelector(".tt").onclick = ev => { ev.stopPropagation(); h.tgts.length > 1 ? openPicker(h) : insertTerm(h.tgts[0]); };
     } else {
-      el.innerHTML = `<span class="ws">${esc(source.slice(h.start, h.end))}</span><span class="n" title="${esc(h.nl[0])}">${h.n}</span>`;
-      el.querySelector(".n").onclick = ev => { ev.stopPropagation(); h.nl.length > 1 ? openPicker(h) : insertTerm(h.nl[0]); };
+      el.innerHTML = `<span class="ws">${esc(source.slice(h.start, h.end))}</span><span class="n" title="${esc(h.tgts[0])}">${h.n}</span>`;
+      el.querySelector(".n").onclick = ev => { ev.stopPropagation(); h.tgts.length > 1 ? openPicker(h) : insertTerm(h.tgts[0]); };
     }
     const ws = el.querySelector(".ws"); mkUnit(ws, source.slice(h.start, h.end));
     box.appendChild(el);
@@ -400,9 +424,9 @@ function renderChips(hits, mode) {
   if (!show) return;
   $("tbcount").textContent = `${hits.length} term${hits.length > 1 ? "s" : ""}`;
   $("terms").innerHTML = hits.map(h =>
-    `<span class="term ${h.kind}"><span class="k">${h.n}</span>${esc(h.en)} → <b>${esc(h.nl[0])}</b>${h.kind === "nt" ? " · NT" : ""}` +
-    (h.nl.length > 1 ? `<span class="more">+${h.nl.length - 1}</span>` : "") + `</span>`).join("");
-  [...$("terms").children].forEach((el, i) => { const h = hits[i]; el.onclick = () => h.nl.length > 1 ? openPicker(h) : insertTerm(h.nl[0]); });
+    `<span class="term ${h.kind}"><span class="k">${h.n}</span>${esc(h.src)} → <b>${esc(h.tgts[0])}</b>${h.kind === "nt" ? " · NT" : ""}` +
+    (h.tgts.length > 1 ? `<span class="more">+${h.tgts.length - 1}</span>` : "") + `</span>`).join("");
+  [...$("terms").children].forEach((el, i) => { const h = hits[i]; el.onclick = () => h.tgts.length > 1 ? openPicker(h) : insertTerm(h.tgts[0]); });
 }
 
 // ---- term pair: a remembered source selection + a remembered target selection
@@ -438,9 +462,14 @@ function clearPair() { lensSel = null; tgtSel = ""; renderLensSel(); $("pair").c
 function addTermPair() {
   const src = $("pair-src").value.trim(), tgt = $("pair-tgt").value.trim();
   if (!src || !tgt) { toast("Select a source term and a target term first"); return; }
-  // Mock termbase; the real pane posts to the local engine.
-  const existing = MOCK_TB.find(([en]) => en.toLowerCase() === src.toLowerCase());
-  if (existing) { if (!existing[1].includes(tgt)) existing[1].push(tgt); } else MOCK_TB.push([src, [tgt], ""]);
+  if (engine) {
+    const {src: sl, tgt: tl} = langs();
+    fetch("/api/terms", {method: "POST", headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({src, tgt, src_lang: sl, tgt_lang: tl})}).catch(() => {});
+  } else {
+    const existing = MOCK_TB.find(t => t.src.toLowerCase() === src.toLowerCase());
+    if (existing) { if (!existing.tgts.includes(tgt)) existing.tgts.push(tgt); } else MOCK_TB.push({src, tgts: [tgt], kind: ""});
+  }
   toast("Added: " + src + " \u2192 " + tgt);
   clearPair();
   const seg = record && record.segments.find(x => x.id === currentId);
@@ -454,7 +483,7 @@ function openPicker(h) {
   if (pickerFor === h) { closePicker(); return; }      // second click folds it away
   pickerFor = h;
   const p = $("picker");
-  p.innerHTML = h.nl.map((t, i) => `<div data-t="${esc(t)}"><span class="k">${String.fromCharCode(97 + i)}</span><b>${esc(t)}</b><span class="src">${esc(h.en)} · mock</span></div>`).join("");
+  p.innerHTML = h.tgts.map((t, i) => `<div data-t="${esc(t)}"><span class="k">${String.fromCharCode(97 + i)}</span><b>${esc(t)}</b><span class="src">${esc(h.src)} · mock</span></div>`).join("");
   for (const row of p.children) row.onclick = () => { insertTerm(row.dataset.t); closePicker(); };
   p.className = "open";
 }
@@ -463,7 +492,7 @@ function insertTerm(text) { insertAtCursor($("tgt"), text); }
 document.addEventListener("keydown", e => {
   if (e.altKey && e.key >= "1" && e.key <= "9") {
     const h = lensHits[+e.key - 1];
-    if (h) { e.preventDefault(); h.nl.length > 1 && e.shiftKey ? openPicker(h) : insertTerm(h.nl[0]); }
+    if (h) { e.preventDefault(); h.tgts.length > 1 && e.shiftKey ? openPicker(h) : insertTerm(h.tgts[0]); }
   }
   if (e.key === "Escape") { closePicker(); clearPair(); }
 });
@@ -480,21 +509,30 @@ function renderSegment(seg, live) {
     $("tmcount").textContent = "";
     return;
   }
-  const hits = termHits(seg.source);
-  renderLens(seg.source, hits);
-  $("segid").textContent = (hits.length ? `${hits.length} term${hits.length > 1 ? "s" : ""} · ` : "") + seg.id;
+  renderLens(seg.source, []);
+  $("segid").textContent = seg.id;
   $("tgt").value = live ?? seg.target;
   $("status").textContent = seg.status + (seg.origin ? " · " + seg.origin : "");
   $("status").className = "status " + seg.status;
+  $("tmcount").textContent = ""; $("tmlist").innerHTML = '<div class="empty">Looking up…</div>';
 
-  const tm = fuzzy(seg.source);
-  $("tmcount").textContent = tm.length ? `${tm.length} match${tm.length > 1 ? "es" : ""}` : "";
-  $("tmlist").innerHTML = tm.length ? tm.map(m =>
-    `<div class="tm" data-t="${esc(m.t)}"><span class="pct ${m.pct === 100 ? "exact" : ""}">${m.pct}%</span>` +
-    `<span class="s">${m.s}</span><div class="t">${esc(m.t)}</div><div class="meta">${m.name}</div></div>`).join("")
-    : '<div class="empty">No TM match.</div>';
-  for (const el of $("tmlist").querySelectorAll(".tm")) el.onclick = () => { $("tgt").value = el.dataset.t; $("tgt").focus(); };
-
+  const token = ++renderToken;
+  getTerms(seg.source).then(terms => {
+    if (token !== renderToken) return;
+    const hits = termHits(seg.source, terms);
+    renderLens(seg.source, hits);
+    $("segid").textContent = (hits.length ? `${hits.length} term${hits.length > 1 ? "s" : ""} · ` : "") + seg.id;
+  });
+  getTmCandidates(seg.source).then(cands => {
+    if (token !== renderToken) return;
+    const tm = fuzzy(seg.source, cands);
+    $("tmcount").textContent = tm.length ? `${tm.length} match${tm.length > 1 ? "es" : ""}` : "";
+    $("tmlist").innerHTML = tm.length ? tm.map(m =>
+      `<div class="tm" data-t="${esc(m.t)}"><span class="pct ${m.pct === 100 ? "exact" : ""}">${m.pct}%</span>` +
+      `<span class="s">${m.s}</span><div class="t">${esc(m.t)}</div><div class="meta">${esc(m.name)}</div></div>`).join("")
+      : '<div class="empty">No TM match.</div>';
+    for (const el of $("tmlist").querySelectorAll(".tm")) el.onclick = () => { $("tgt").value = el.dataset.t; $("tgt").focus(); };
+  });
 }
 
 function insertAtCursor(ta, text) {
@@ -589,7 +627,7 @@ async function draftAll() {
   $("draftall").disabled = true;
   for (const s of record.segments) {
     if (s.status === "confirmed") continue;
-    const best = fuzzy(s.source)[0];
+    const best = fuzzy(s.source, await getTmCandidates(s.source))[0];
     if (best) await writeBack(s.id, best.t, "draft");
   }
   $("draftall").disabled = false;
@@ -598,6 +636,7 @@ async function draftAll() {
 
 Office.onReady(async info => {
   if (info.host !== Office.HostType.Word) { $("foot").textContent = "Open this pane in Word."; return; }
+  await detectEngine();
   await loadRecord();
   gridOrder = await documentOrder();
   if (record) {
@@ -625,7 +664,10 @@ Office.onReady(async info => {
   $("pair-add").onclick = addTermPair; $("pair-clear").onclick = clearPair;
   for (const id of ["pair-src", "pair-tgt"]) $(id).addEventListener("keydown", e => { if (e.key === "Enter") addTermPair(); });
   document.addEventListener("keydown", e => { if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "t") { e.preventDefault(); addTermPair(); } });
-  $("foot").textContent = record ? `${record.sourceLang} → ${record.targetLang} · matches are a mock; the real pane asks the local engine.`
+  const engineNote = engine
+    ? `engine: ${engine.termbases.map(t => t.name).join(", ")} (${engine.terms.toLocaleString()} terms) · TM ${engine.tm_units.toLocaleString()} units`
+    : "no engine · matches are a mock";
+  $("foot").textContent = record ? `${record.sourceLang} → ${record.targetLang} · ${engineNote}`
                                  : "This document has no Supervertaler record yet.";
   onSelectionChanged();
 });

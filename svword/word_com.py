@@ -88,18 +88,31 @@ def anchor_document(doc, unit: str = "sentence"):
     """Anchor every unit of the document. `unit` is "sentence" for technical
     text, where sentences are the units of reuse, or "paragraph" for marketing
     copy, where the writer merges, splits and reorders sentences freely and
-    the paragraph is what a TM should store. Returns the anchors in order."""
-    out = []
-    has_words = lambda rng: any(ch.isalpha() for ch in rng.Text)   # skips image-only paragraphs
+    the paragraph is what a TM should store. Returns the anchors in order.
+
+    Spans are collected first and anchored from the end of the document
+    backwards, so adding a control never shifts a span still to be anchored.
+    The paragraph mark is always left outside the control: a heading with no
+    full stop is one "sentence" that includes its mark, and wrapping the mark
+    makes Word create a nested pair of controls."""
+    spans = set()          # a set: Word's Sentences enumeration can yield a heading twice
     for para in doc.Paragraphs:
         if unit == "paragraph":
-            rng = para.Range
-            if has_words(rng):
-                out.append(anchor(doc, rng))
+            units = [para.Range]
         else:
-            for sent in list(sentences_in_paragraph(para)):
-                if has_words(sent):
-                    out.append(anchor(doc, sent))
+            sents = para.Range.Sentences
+            units = [sents.Item(i) for i in range(1, sents.Count + 1)]
+        for rng in units:
+            text = rng.Text
+            if not any(ch.isalpha() for ch in text):      # image-only, numbers-only
+                continue
+            end = rng.End - (len(text) - len(text.rstrip("\r\n\x07 \t")))
+            if end > rng.Start:
+                spans.add((rng.Start, end))
+    out = []
+    for start, end in sorted(spans, reverse=True):
+        out.append(anchor(doc, doc.Range(start, end)))
+    out.reverse()
     return out
 
 
