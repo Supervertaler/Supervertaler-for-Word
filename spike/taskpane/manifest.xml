@@ -20,7 +20,7 @@
     <Host Name="Document"/>
   </Hosts>
   <DefaultSettings>
-    <SourceLocation DefaultValue="http://localhost:3000/index.html"/>
+    <SourceLocation DefaultValue="http://localhost:3000/pane"/>
   </DefaultSettings>
   <Permissions>ReadWriteDocument</Permissions>
   <VersionOverrides xmlns="http://schemas.microsoft.com/office/taskpaneappversionoverrides" xsi:type="VersionOverridesV1_0">
@@ -66,7 +66,7 @@
         <bt:Image id="Icon.80" DefaultValue="http://localhost:3000/icon-80.png"/>
       </bt:Images>
       <bt:Urls>
-        <bt:Url id="Taskpane.Url" DefaultValue="http://localhost:3000/index.html"/>
+        <bt:Url id="Taskpane.Url" DefaultValue="http://localhost:3000/pane"/>
       </bt:Urls>
       <bt:ShortStrings>
         <bt:String id="Group.Label" DefaultValue="Supervertaler"/>

@@ -158,6 +158,14 @@ class Handler(SimpleHTTPRequestHandler):
 
     def do_GET(self):
         u = urlparse(self.path)
+        if u.path == "/pane":
+            # The manifest points here. Redirecting to a version-stamped address
+            # defeats Office's add-in page cache, which ignores no-store.
+            stamp = int(os.path.getmtime(os.path.join(STATIC, "index.html")))
+            self.send_response(302)
+            self.send_header("Location", "/index.html?v=%d" % stamp)
+            self.end_headers()
+            return
         if not u.path.startswith("/api/"):
             return super().do_GET()
         q = {k: v[0] for k, v in parse_qs(u.query).items()}
