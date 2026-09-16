@@ -1,10 +1,11 @@
 """Anchor a real source document and fill in targets from a list of pairs.
 
-    python spike/build_example.py <source.docx> <pairs.json> <out.docx> [--open]
+    python spike/build_example.py <source.docx> <out.docx> [--pairs pairs.json] [--langs nl en] [--open]
 
 pairs.json is [[source, target], ...]. Sentences whose source matches a pair
 get the target written as a tracked change (origin "tm"); the rest stay
-untranslated. --open then shows the result in a visible Word of its own.
+untranslated. Without --pairs every sentence is anchored untranslated.
+--open then shows the result in a visible Word of its own.
 """
 from __future__ import annotations
 import json, os, re, shutil, sys
@@ -16,16 +17,23 @@ norm = lambda s: re.sub(r"\s+", " ", s).strip().lower()
 
 
 def main():
-    args = [a for a in sys.argv[1:] if not a.startswith("--")]
-    src_docx, pairs_json, out_docx = args
-    pairs = {norm(s): t for s, t in json.load(open(pairs_json, encoding="utf-8")) if t.strip()}
+    argv = sys.argv[1:]
+    def opt(name, n):
+        if name in argv:
+            i = argv.index(name); vals = argv[i + 1:i + 1 + n]; del argv[i:i + 1 + n]; return vals
+        return None
+    pairs_json = (opt("--pairs", 1) or [None])[0]
+    langs = opt("--langs", 2) or ["en", "nl"]
+    args = [a for a in argv if not a.startswith("--")]
+    src_docx, out_docx = args
+    pairs = {norm(s): t for s, t in json.load(open(pairs_json, encoding="utf-8")) if t.strip()} if pairs_json else {}
     os.makedirs(os.path.dirname(os.path.abspath(out_docx)), exist_ok=True)
     shutil.copy(src_docx, out_docx)
 
     app = w.word_app(visible=False)
     try:
         doc = app.Documents.Open(os.path.abspath(out_docx))
-        record = ProjectRecord("en", "nl")
+        record = ProjectRecord(langs[0], langs[1])
         ccs = w.anchor_document(doc, "sentence")
         hit = 0
         for cc in ccs:
