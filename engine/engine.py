@@ -83,6 +83,13 @@ class Engine:
             e["kind"] = "nt"
         self.max_words = max(self.max_words, key.count(" ") + 1)
 
+    def _add_pair(self, src, tgt, kind, pair):
+        """A termbase entry serves both directions: BEIJER is stored
+        English-first and is used on Dutch-to-English jobs, as Studio does."""
+        self._add_term(src, tgt, kind, pair)
+        if tgt:
+            self._add_term(tgt, src, kind, (pair[1], pair[0]))
+
     def _load_terms(self, tb):
         rows = self.con.execute(
             "select source_term, target_term, is_nontranslatable, synonyms, source_lang, target_lang "
@@ -92,7 +99,7 @@ class Engine:
                 continue
             # the term's own languages win; a termbase's header can be wrong or mixed
             pair = ((sl or tb["src"]).lower()[:2], (tl or tb["tgt"]).lower()[:2])
-            self._add_term(src, tgt or "", "nt" if nt else "", pair)
+            self._add_pair(src, tgt or "", "nt" if nt else "", pair)
             for s in (syn or "").split(";"):
                 if s.strip():
                     self._add_term(src, s.strip(), "", pair)
@@ -101,7 +108,7 @@ class Engine:
     def _load_pending(self):
         if os.path.exists(PENDING):
             for t in json.load(open(PENDING, encoding="utf-8")):
-                self._add_term(t["src"], t["tgt"], "", (t.get("src_lang", ""), t.get("tgt_lang", "")))
+                self._add_pair(t["src"], t["tgt"], "", (t.get("src_lang", ""), t.get("tgt_lang", "")))
 
     # ---- queries
     def status(self):
@@ -137,7 +144,7 @@ class Engine:
         items = json.load(open(PENDING, encoding="utf-8")) if os.path.exists(PENDING) else []
         items.append({"src": src, "tgt": tgt, "src_lang": src_lang, "tgt_lang": tgt_lang})
         json.dump(items, open(PENDING, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
-        self._add_term(src, tgt, "", (src_lang, tgt_lang))
+        self._add_pair(src, tgt, "", (src_lang, tgt_lang))
 
 
 class Handler(SimpleHTTPRequestHandler):
